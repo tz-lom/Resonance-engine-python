@@ -1,4 +1,4 @@
-#include <Resonance/ScriptEngineInterface.h>
+#include <Resonance/scriptengineinterface.h>
 
 #include <Python.h>
 
@@ -17,7 +17,7 @@ static const char* engineNameString = "python";
 
 typedef struct {
     int id;
-    SerializedData::rid type;
+    Thir::SerializedData::rid type;
 } StreamDescription;
 
 static std::map<int, StreamDescription> outputs;
@@ -50,10 +50,8 @@ PyObject* mod_createStream(PyObject *self, PyObject *args)
 
     if(type=="event")
     {
-        SerializedData *type = ConnectionHeader_Message::create().finish().finish();
+        SD type = ConnectionHeader_Message::create().next().finish();
         int sendId = ip.declareStream(name.data(), SerializedDataContainer({type->data(), (uint32_t)type->size()}));
-        delete type;
-
         if(sendId!=-1)
         {
             outputs[id] = {sendId, Message::ID};
@@ -70,12 +68,11 @@ PyObject* mod_createStream(PyObject *self, PyObject *args)
             return PyBool_FromLong(false);
         }
 
-        SerializedData *type = ConnectionHeader_Float64::create()
+        SD type = ConnectionHeader_Float64::create()
                 .set(channels)
                 .set(samplingRate)
                 .finish();
         int sendId = ip.declareStream(name.data(), SerializedDataContainer({type->data(), (uint32_t)type->size()}));
-        delete type;
 
         if(sendId!=-1)
         {
@@ -172,9 +169,9 @@ bool prepareEngine(const char *code, size_t codeLength, const SerializedDataCont
     int registeredInputs = 0;
     for(uint32_t i=0; i<streamCount; ++i)
     {
-        SerializedData data((const char*)streams[i].data, streams[i].size);
+        Thir::SerializedData data((const char*)streams[i].data, streams[i].size);
         //data.extractString<ConnectionHeaderContainer::name>()
-        SerializedData type = data.extractAny<ConnectionHeaderContainer::type>();
+        Thir::SerializedData type = data.field<ConnectionHeaderContainer::type>();
 
         switch(type.id())
         {
@@ -185,8 +182,8 @@ bool prepareEngine(const char *code, size_t codeLength, const SerializedDataCont
             PyList_Append(inputList, Py_BuildValue(
                               "{s:s,s:I,s:d}",
                               "type", "channels",
-                              "channels", type.extractField<ConnectionHeader_Float64::channels>(),
-                              "samplingRate", type.extractField<ConnectionHeader_Float64::samplingRate>()
+                              "channels", type.field<ConnectionHeader_Float64::channels>().value(),
+                              "samplingRate", type.field<ConnectionHeader_Float64::samplingRate>().value()
                               ));
 
             inputs[i] = {++registeredInputs, Float64::ID};
@@ -228,11 +225,11 @@ void blockReceived(const int id, const SerializedDataContainer block)
         PyObject *onDataBlock = PyDict_GetItemString(dict, "on_datablock_message");
         if(onDataBlock && PyCallable_Check(onDataBlock))
         {
-            SerializedData data(block.data, block.size);
+            Thir::SerializedData data(block.data, block.size);
             Py_DECREF(PyObject_CallFunction(onDataBlock, "isK",
                                             is.id,
-                                            data.extractString<Message::message>().data(),
-                                            data.extractField<Message::created>()
+                                            data.field<Message::message>().value().c_str(),
+                                            data.field<Message::created>().value()
                                             ));
 
         }
@@ -244,10 +241,10 @@ void blockReceived(const int id, const SerializedDataContainer block)
         PyObject *onDataBlock = PyDict_GetItemString(dict, "on_datablock_double");
         if(onDataBlock && PyCallable_Check(onDataBlock))
         {
-            SerializedData data(block.data, block.size);
+            Thir::SerializedData data(block.data, block.size);
 
-            auto vec = data.extractVector<Float64::data>();
-            int samples = data.extractField<Float64::samples>();
+            auto vec = data.field<Float64::data>().toVector();
+            int samples = data.field<Float64::samples>();
 
             PyObject *ldata = PyList_New(vec.size());
             for(int i=vec.size()-1; i>=0; --i)
@@ -259,7 +256,7 @@ void blockReceived(const int id, const SerializedDataContainer block)
             Py_DECREF(PyObject_CallFunction(onDataBlock, "iOIK",
                                             is.id,
                                             samples,
-                                            data.extractField<Float64::created>()/1E3
+                                            data.field<Float64::created>().value()/1E3
                                             ));
             Py_DECREF(ldata);
         }

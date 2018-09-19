@@ -7,12 +7,14 @@ Product {
 
     Depends { name: "Resonance" }
     Depends { name: "cpp" }
+    
+    Properties {
+        condition: Resonance != null
+        Resonance.standalone: true
+    }
 
     name: "pythonEngine"
     type: "dynamiclibrary"
-    cpp.minimumOsxVersion: '10.9'
-    cpp.cxxLanguageVersion: "c++11"
-    Resonance.headersOnly: true
 
     files: [
         "pythonengine.cpp",
@@ -26,7 +28,7 @@ Product {
     cpp.defines: python.defines
     cpp.dynamicLibraries: python.libraries
     cpp.libraryPaths: python.libraryPaths
-    cpp.includePaths: python.includePaths
+    cpp.includePaths: python.includePaths.concat("thir")
 
     Group {
         name: "Install module"
