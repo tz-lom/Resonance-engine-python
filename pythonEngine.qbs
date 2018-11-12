@@ -1,5 +1,6 @@
 import qbs 1.0
-
+import qbs.Environment // Подключил еще методов
+import qbs.File        // Подключил еще методов
 import qbs.Probes as Probes
 
 Product {
@@ -15,20 +16,30 @@ Product {
 
     name: "pythonEngine"
     type: "dynamiclibrary"
+    files: [ "pythonengine.cpp" ]
 
-    files: [
-        "pythonengine.cpp",
+    property string pythonHome: 'c:\\Python27'
+
+    cpp.dynamicLibraries: 'python27'
+    cpp.cxxLanguageVersion: "c++11"
+
+    cpp.defines: [
+        'WIN32',
+        '_hypot=hypot'
     ]
 
-    Probes.PkgConfigProbe {
-        id: python
-        name: "python-2.7"
-    }
+    cpp.libraryPaths: pythonHome + "/libs" // Добавил в окружение доп. инструмент -PythonRun с путями, напрямую задается
 
-    cpp.defines: python.defines
-    cpp.dynamicLibraries: python.libraries
-    cpp.libraryPaths: python.libraryPaths
-    cpp.includePaths: python.includePaths.concat("thir")
+    cpp.includePaths: [
+            "thir",
+            "boost/preprocessor/include",
+            "boost/endian/include",
+            "boost/config/include",
+            "boost/predef/include",
+            "boost/core/include",
+            "boost/static_assert/include",
+            pythonHome + "/include"
+        ]
 
     Group {
         name: "Install module"

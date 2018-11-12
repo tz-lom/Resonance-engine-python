@@ -112,6 +112,7 @@ PyObject* mod_sendData(PyObject *self, PyObject *args)
         break;
     case Float64::ID:
     {
+// create NumPy Matrix
 
         /*Rcpp::NumericMatrix data = args["data"];
 
