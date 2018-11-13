@@ -14,6 +14,8 @@ using Resonance::RTC;
 
 static InterfacePointers ip;
 static const char* engineNameString = "python";
+static const char* engineInitString = "Init python";
+static const char* engineCodeString = "Some python code";
 
 typedef struct {
     int id;
@@ -28,6 +30,16 @@ bool pythonParceQueue();
 const char * engineName()
 {
     return engineNameString;
+}
+
+const char * engineInitDefault()
+{
+    return engineInitString;
+}
+
+const char * engineCodeDefault()
+{
+    return engineCodeString;
 }
 
 static PyObject *module;
