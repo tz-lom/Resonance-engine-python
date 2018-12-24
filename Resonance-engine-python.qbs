@@ -5,5 +5,9 @@ Project {
     
     qbsSearchPaths: "Resonance/qbs"
     
-    references: 'pythonEngine.qbs'
+    references: [
+        'pythonEngine.qbs',
+        'pythonEngine-test.qbs',
+        'pythonEngine-unittest.qbs'
+    ]
 }

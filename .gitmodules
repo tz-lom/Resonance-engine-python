@@ -22,3 +22,6 @@
 [submodule "boost/static_assert"]
 	path = boost/static_assert
 	url = https://github.com/boostorg/static_assert
+[submodule "googletest"]
+	path = googletest
+	url = https://github.com/abseil/googletest
