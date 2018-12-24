@@ -126,50 +126,6 @@ const char* engineCodeDefault()
 
 static PyObject* module;
 
-PyObject* mod_sendData(PyObject*, PyObject* args)
-{
-    int id;
-
-    if (!PyArg_UnpackTuple(args, "i", 1, 5, &id)) {
-        Py_RETURN_FALSE;
-    }
-
-    auto os = outputs[id];
-
-    switch (os.type) {
-    case Message::ID: {
-        /* PyArg_VaParse()
-        SerializedData *block = Message::create()
-                .set(RTC::now())
-                .set(0)
-                .set(Rcpp::as<std::string>(args["data"]))
-                .finish();
-
-        ip.sendBlock(os.id, SerializedDataContainer({block->data(), block->size()}) );
-        delete block;*/
-    } break;
-    case Float64::ID: {
-        // create NumPy Matrix
-
-        /*Rcpp::NumericMatrix data = args["data"];
-
-        int rows = data.nrow();
-        std::vector<double> idata = Rcpp::as<std::vector<double> >( transpose(data) );
-
-        SerializedData *block = Float64::create()
-                .set(RTC::now())
-                .set(0)
-                .set(rows)
-                .set(idata)
-                .finish();
-
-        ip.sendBlock(os.id, SerializedDataContainer({block->data(), block->size()}) );
-        delete block;*/
-    } break;
-    }
-    Py_RETURN_FALSE;
-}
-
 PyObject* mod_addToQueue(PyObject*, PyObject* args)
 {
     PyStringObject* nameObj = nullptr;
@@ -199,6 +155,11 @@ PyObject* mod_addToQueue(PyObject*, PyObject* args)
     }
 }
 
+PyObject* mod_do_nothing(PyObject*, PyObject*)
+{
+    Py_RETURN_NONE;
+}
+
 PyObject* mod_register_callbacks(PyObject*, PyObject* args)
 {
 
@@ -222,17 +183,29 @@ static PyMethodDef ModuleMethods[] = {
         "Register callbacks for Resonance runtime." },
     { "add_to_queue", mod_addToQueue, METH_VARARGS,
         "Adds data to resonance event queue" },
+    { "do_nothing", mod_do_nothing, METH_VARARGS,
+        "Used as a default value for callbacks" },
     { nullptr, nullptr, 0, nullptr }
 };
 
-bool initializeEngine(InterfacePointers _ip, const char* code, size_t codeLength)
+bool initializeEngine(InterfacePointers _ip, const char* code, size_t)
 {
     ip = _ip;
     Py_SetProgramName("pythonEngine");
     Py_Initialize();
     import_array1(false);
     module = Py_InitModule("resonate", ModuleMethods);
-    (void)codeLength;
+
+    callback_on_prepare = PyDict_GetItemString(PyModule_GetDict(module), "do_nothing");
+
+    callback_on_data_block = callback_on_prepare;
+    callback_on_start = callback_on_prepare;
+    callback_on_stop = callback_on_prepare;
+    callback_si_channels = callback_on_prepare;
+    callback_si_event = callback_on_prepare;
+    callback_db_event = callback_on_prepare;
+    callback_db_channels = callback_on_prepare;
+
     PyRun_SimpleString(code);
     return true;
 }
@@ -332,7 +305,7 @@ void blockReceived(const int id, const SerializedDataContainer block)
         int samples = data.field<Float64::samples>().value();
         npy_int dims[2] = { vec.size() / samples, samples };
 
-        PyObject* pyData = PyArray_SimpleNewFromData(2, (npy_intp)&dims, NPY_FLOAT64, reinterpret_cast<void*>(vec.data()));
+        PyObject* pyData = PyArray_SimpleNewFromData(2, (npy_intp*)&dims, NPY_FLOAT64, reinterpret_cast<void*>(vec.data()));
 
         PyObject* arglist = Py_BuildValue("(O,l,s)",
             is.si,
