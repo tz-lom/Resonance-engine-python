@@ -7,6 +7,7 @@
 
 #include <Resonance/protocol.cpp>
 #include <Resonance/rtc.cpp>
+#include <iostream>
 #include <map>
 #include <vector>
 
@@ -122,6 +123,16 @@ static PyObject* callback_on_data_block = nullptr;
 static PyObject* callback_on_start = nullptr;
 static PyObject* callback_on_stop = nullptr;
 
+static PyObject* callback_trace = nullptr;
+
+void trace(PyObject* obj)
+{
+    SmartPyObject arglist = Py_BuildValue("(O)", obj);
+    SmartPyObject result = PyObject_CallObject(callback_trace, arglist.get());
+    if (!result)
+        throw std::runtime_error("Failed to call trace");
+}
+
 bool pythonParceQueue();
 
 const char* engineName()
@@ -179,7 +190,7 @@ PyObject* mod_do_nothing(PyObject*, PyObject*)
 PyObject* mod_register_callbacks(PyObject*, PyObject* args)
 {
 
-    if (!PyArg_UnpackTuple(args, "register_callbacks", 8, 8,
+    if (!PyArg_UnpackTuple(args, "register_callbacks", 8, 9,
             &callback_on_prepare,
             &callback_on_data_block,
             &callback_on_start,
@@ -187,7 +198,8 @@ PyObject* mod_register_callbacks(PyObject*, PyObject* args)
             &callback_si_channels,
             &callback_si_event,
             &callback_db_event,
-            &callback_db_channels)) {
+            &callback_db_channels,
+            &callback_trace)) {
         Py_RETURN_FALSE;
     }
 
@@ -329,7 +341,8 @@ void blockReceived(const int id, const SerializedDataContainer block)
         int samples = data.field<Float64::samples>().value();
         npy_intp dims[2] = { static_cast<npy_intp>(samples), static_cast<npy_intp>(vec.size() / samples) };
 
-        SmartPyObject pyData(PyArray_SimpleNewFromData(2, dims, NPY_FLOAT64, reinterpret_cast<void*>(vec.data())));
+        SmartPyObject pyDataBorrowed = PyArray_SimpleNewFromData(2, dims, NPY_FLOAT64, reinterpret_cast<void*>(vec.data()));
+        SmartPyObject pyData = PyArray_Copy(reinterpret_cast<PyArrayObject*>(pyDataBorrowed.get()));
 
         SmartPyObject arglist(Py_BuildValue("(OlO)",
             is.si,
@@ -391,13 +404,10 @@ bool pythonParceQueue()
                 ip.sendBlock(os.id, SerializedDataContainer({ block->data(), block->size() }));
             } break;
             case Float64::ID: {
-
-                SmartPyObject array = PyArray_FROM_OTF(data, NPY_DOUBLE, NPY_ARRAY_IN_ARRAY | NPY_ARRAY_ENSUREARRAY);
-
-                if (!array) {
+                if (!PyArray_Check(data)) {
                     throw std::runtime_error("Can't unpack arguments for sendBlockToStream [channels]");
                 }
-                PyArrayObject* arr = reinterpret_cast<PyArrayObject*>(array.get());
+                PyArrayObject* arr = reinterpret_cast<PyArrayObject*>(data);
                 if (PyArray_NDIM(arr) != 2) {
                     throw std::runtime_error("Can't unpack arguments for sendBlockToStream [channels dim is wrong]");
                 }
@@ -410,18 +420,17 @@ bool pythonParceQueue()
                 double* first = (double*)(PyArray_DATA(arr));
                 double* last = first + PyArray_SIZE(arr);
 
-                auto s1 = PyArray_STRIDE(arr, 0);
-                auto s2 = PyArray_STRIDE(arr, 1);
-
-                SD block = Float64::create()
-                               .set(RTC::now())
-                               .set(0)
-                               .set(rows)
-                               .add(first, last)
-                               .finish()
-                               .finish();
+                SD block
+                    = Float64::create()
+                          .set(RTC::now())
+                          .set(0)
+                          .set(rows)
+                          .add(first, last)
+                          .finish()
+                          .finish();
 
                 ip.sendBlock(os.id, SerializedDataContainer({ block->data(), block->size() }));
+
             } break;
             }
         } break;
