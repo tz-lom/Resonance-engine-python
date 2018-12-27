@@ -8,6 +8,6 @@ Project {
     references: [
         'pythonEngine.qbs',
         'pythonEngine-test.qbs',
-        'pythonEngine-unittest.qbs'
+        //'pythonEngine-unittest.qbs'
     ]
 }

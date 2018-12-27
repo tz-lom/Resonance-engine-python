@@ -5,6 +5,13 @@ CppApplication {
     name: "Unit tests"
     type: ["application", "autotest"]
     
+    Depends { name: "Resonance" }
+    
+    Properties {
+        condition: Resonance != null
+        Resonance.standalone: true
+    }
+    
     
     consoleApplication: true
         

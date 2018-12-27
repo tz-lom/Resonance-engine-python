@@ -1,5 +1,7 @@
 #include <Resonance/scriptengineinterface.h>
 
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+
 #include <Python.h>
 #include <numpy/arrayobject.h>
 
@@ -16,6 +18,19 @@ static InterfacePointers ip;
 static const char* engineNameString = "python";
 static const char* engineInitString = "Init python";
 static const char* engineCodeString = "Some python code";
+
+class SmartPyObject : public std::unique_ptr<PyObject, void (*)(PyObject*)> {
+public:
+    SmartPyObject(PyObject* ptr)
+        : std::unique_ptr<PyObject, void (*)(PyObject*)>(ptr, decref)
+    {
+    }
+
+    static void decref(PyObject* obj)
+    {
+        Py_XDECREF(obj);
+    }
+};
 
 class QueueMember {
 public:
@@ -131,7 +146,7 @@ PyObject* mod_addToQueue(PyObject*, PyObject* args)
     PyStringObject* nameObj = nullptr;
     PyObject* data = nullptr;
 
-    if (!PyArg_UnpackTuple(args, "SO", 2, 2, &nameObj, &data)) {
+    if (!PyArg_UnpackTuple(args, "add_to_queue", 2, 2, &nameObj, &data)) {
         Py_RETURN_FALSE;
     }
 
@@ -150,6 +165,7 @@ PyObject* mod_addToQueue(PyObject*, PyObject* args)
         queue.emplace_back(QueueMember::stopTimer, data);
         Py_RETURN_TRUE;
     } else {
+        PyErr_BadInternalCall();
         Py_XDECREF(data);
         Py_RETURN_FALSE;
     }
@@ -163,7 +179,7 @@ PyObject* mod_do_nothing(PyObject*, PyObject*)
 PyObject* mod_register_callbacks(PyObject*, PyObject* args)
 {
 
-    if (!PyArg_UnpackTuple(args, "OOOOOOOO", 8, 8,
+    if (!PyArg_UnpackTuple(args, "register_callbacks", 8, 8,
             &callback_on_prepare,
             &callback_on_data_block,
             &callback_on_start,
@@ -224,7 +240,7 @@ bool prepareEngine(const char* code, size_t codeLength, const SerializedDataCont
     (void)codeLength;
     PyRun_SimpleString(code);
 
-    PyObject* inputList = PyList_New(0);
+    SmartPyObject inputList(PyList_New(0));
     for (uint32_t i = 0; i < streamCount; ++i) {
         Thir::SerializedData data((const char*)streams[i].data, streams[i].size);
         //data.extractString<ConnectionHeaderContainer::name>()
@@ -235,41 +251,49 @@ bool prepareEngine(const char* code, size_t codeLength, const SerializedDataCont
         //case ConnectionHeader_Int64::ID:
         case ConnectionHeader_Float64::ID: {
 
-            PyObject* arglist = Py_BuildValue(
-                "(i,f,i,s)",
+            SmartPyObject arglist(Py_BuildValue(
+                "(ifis)",
                 type.field<ConnectionHeader_Float64::channels>().value(),
                 type.field<ConnectionHeader_Float64::samplingRate>().value(),
                 i + 1,
-                data.field<ConnectionHeaderContainer::name>().value().c_str());
-            PyObject* si = PyObject_CallObject(callback_si_channels, arglist);
-            Py_DECREF(arglist);
+                data.field<ConnectionHeaderContainer::name>().value().c_str()));
+            PyObject* si = PyObject_CallObject(callback_si_channels, arglist.get());
 
-            PyList_Append(inputList, si);
+            if (si == nullptr)
+                throw std::runtime_error("Failed to construct Float64 stream definition");
+
+            if (PyList_Append(inputList.get(), si) != 0) {
+                throw std::runtime_error("Failed to populate list ");
+            }
 
             inputs[i] = InputStreamDescription(static_cast<int>(i + 1), Float64::ID, si);
         } break;
 
         case ConnectionHeader_Message::ID: {
-            PyList_Append(inputList, Py_BuildValue("{s:s}", "type", "event"));
-
-            PyObject* arglist = Py_BuildValue(
-                "(i,s)",
+            SmartPyObject arglist(Py_BuildValue(
+                "(is)",
                 i + 1,
-                data.field<ConnectionHeaderContainer::name>().value().c_str());
-            PyObject* si = PyObject_CallObject(callback_si_event, arglist);
-            Py_DECREF(arglist);
+                data.field<ConnectionHeaderContainer::name>().value().c_str()));
 
-            PyList_Append(inputList, si);
+            PyObject* si = PyObject_CallObject(callback_si_event, arglist.get());
+
+            if (si == nullptr)
+                throw std::runtime_error("Failed to construct Message stream definition");
+
+            if (PyList_Append(inputList.get(), si) != 0) {
+                throw std::runtime_error("Failed to populate list ");
+            }
 
             inputs[i] = InputStreamDescription(static_cast<int>(i + 1), Message::ID, si);
         } break;
         }
     }
 
-    PyObject* arglist = Py_BuildValue("(s)", code);
-    PyObject* result = PyObject_CallObject(callback_on_prepare, arglist);
-    Py_DECREF(result);
-    Py_DECREF(arglist);
+    SmartPyObject arglist(Py_BuildValue("(s,O)", code, inputList.get()));
+    SmartPyObject result(PyObject_CallObject(callback_on_prepare, arglist.get()));
+
+    if (!result)
+        throw std::runtime_error("Failed to call onPrepare");
 
     return pythonParceQueue();
 }
@@ -283,19 +307,19 @@ void blockReceived(const int id, const SerializedDataContainer block)
 
         Thir::SerializedData data(block.data, block.size);
 
-        PyObject* arglist = Py_BuildValue("(O,l,s)",
+        SmartPyObject arglist(Py_BuildValue("(Ols)",
             is.si,
             data.field<Message::created>().value(),
-            data.field<Message::message>().value().c_str());
-        PyObject* result = PyObject_CallObject(callback_db_event, arglist);
+            data.field<Message::message>().value().c_str()));
+        SmartPyObject result(PyObject_CallObject(callback_db_event, arglist.get()));
+        if (!result)
+            throw std::runtime_error("Failed to call dbEvent");
 
-        Py_DECREF(arglist);
+        SmartPyObject arglist2(Py_BuildValue("(O)", result.get()));
 
-        arglist = Py_BuildValue("(O)", result);
-
-        Py_DECREF(PyObject_CallObject(callback_on_data_block, arglist));
-        Py_DECREF(arglist);
-        Py_DECREF(result);
+        SmartPyObject result2(PyObject_CallObject(callback_on_data_block, arglist2.get()));
+        if (!result2)
+            throw std::runtime_error("Failed to call onDataBlock for Message");
     } break;
     case Float64::ID: {
         Thir::SerializedData data(block.data, block.size);
@@ -303,24 +327,24 @@ void blockReceived(const int id, const SerializedDataContainer block)
         auto vec = data.field<Float64::data>().toVector();
 
         int samples = data.field<Float64::samples>().value();
-        npy_int dims[2] = { vec.size() / samples, samples };
+        npy_intp dims[2] = { static_cast<npy_intp>(samples), static_cast<npy_intp>(vec.size() / samples) };
 
-        PyObject* pyData = PyArray_SimpleNewFromData(2, (npy_intp*)&dims, NPY_FLOAT64, reinterpret_cast<void*>(vec.data()));
+        SmartPyObject pyData(PyArray_SimpleNewFromData(2, dims, NPY_FLOAT64, reinterpret_cast<void*>(vec.data())));
 
-        PyObject* arglist = Py_BuildValue("(O,l,s)",
+        SmartPyObject arglist(Py_BuildValue("(OlO)",
             is.si,
-            data.field<Message::created>().value(),
-            pyData);
-        PyObject* result = PyObject_CallObject(callback_db_channels, arglist);
+            data.field<Float64::created>().value(),
+            pyData.get()));
+        SmartPyObject result(PyObject_CallObject(callback_db_channels, arglist.get()));
 
-        Py_DECREF(arglist);
+        if (!result)
+            throw std::runtime_error("Failed to call dbChannels");
 
-        arglist = Py_BuildValue("(O)", result);
+        SmartPyObject arglist2(Py_BuildValue("(O)", result.get()));
 
-        Py_DECREF(PyObject_CallObject(callback_on_data_block, arglist));
-        Py_DECREF(arglist);
-        Py_DECREF(result);
-        Py_DECREF(pyData);
+        SmartPyObject result2(PyObject_CallObject(callback_on_data_block, arglist2.get()));
+        if (!result2)
+            throw std::runtime_error("Failed to call onDataBlock for Float64");
     } break;
     }
 
@@ -329,18 +353,18 @@ void blockReceived(const int id, const SerializedDataContainer block)
 
 void startEngine()
 {
-    PyObject* arglist = PyTuple_New(0);
-    PyObject* result = PyObject_CallObject(callback_on_start, arglist);
-    Py_DECREF(result);
-    Py_DECREF(arglist);
+    SmartPyObject arglist = PyTuple_New(0);
+    SmartPyObject result = PyObject_CallObject(callback_on_start, arglist.get());
+    if (!result)
+        throw std::runtime_error("Failed to call onStart");
 }
 
 void stopEngine()
 {
-    PyObject* arglist = PyTuple_New(0);
-    PyObject* result = PyObject_CallObject(callback_on_stop, arglist);
-    Py_DECREF(result);
-    Py_DECREF(arglist);
+    SmartPyObject arglist = PyTuple_New(0);
+    SmartPyObject result = PyObject_CallObject(callback_on_stop, arglist.get());
+    if (!result)
+        throw std::runtime_error("Failed to call onStop");
 }
 
 bool pythonParceQueue()
@@ -348,10 +372,10 @@ bool pythonParceQueue()
     for (const QueueMember& event : queue) {
         switch (event.type) {
         case QueueMember::sendBlockToStream: {
-            int id;
+            Py_ssize_t id;
             PyObject* data;
-            if (!PyArg_UnpackTuple(const_cast<PyObject*>(event.args), "iO", 2, 2, &id, &data)) {
-                continue; // @todo: handle exception?
+            if (!PyArg_ParseTuple(const_cast<PyObject*>(event.args), "nO", &id, &data)) {
+                throw std::runtime_error("Can't unpack arguments for sendBlockToStream");
             }
 
             auto os = outputs[id];
@@ -368,20 +392,26 @@ bool pythonParceQueue()
             } break;
             case Float64::ID: {
 
-                if (!PyArray_Check(data)) {
-                    continue; // @todo: handle exception?
+                SmartPyObject array = PyArray_FROM_OTF(data, NPY_DOUBLE, NPY_ARRAY_IN_ARRAY | NPY_ARRAY_ENSUREARRAY);
+
+                if (!array) {
+                    throw std::runtime_error("Can't unpack arguments for sendBlockToStream [channels]");
                 }
-                if (PyArray_NDIM(data) != 2) {
-                    continue; // @todo: handle exception?
+                PyArrayObject* arr = reinterpret_cast<PyArrayObject*>(array.get());
+                if (PyArray_NDIM(arr) != 2) {
+                    throw std::runtime_error("Can't unpack arguments for sendBlockToStream [channels dim is wrong]");
                 }
-                if (PyArray_TYPE(data) != NPY_FLOAT64) {
-                    continue; // @todo: handle exception?
+                if (PyArray_TYPE(arr) != NPY_FLOAT64) {
+                    throw std::runtime_error("Can't unpack arguments for sendBlockToStream [ channels type is wrong]");
                 }
 
-                int rows = PyArray_DIM(data, 0);
+                int rows = PyArray_DIM(arr, 0);
 
-                double* first = reinterpret_cast<double*>(PyArray_DATA(data));
-                double* last = first + PyArray_SIZE(data);
+                double* first = (double*)(PyArray_DATA(arr));
+                double* last = first + PyArray_SIZE(arr);
+
+                auto s1 = PyArray_STRIDE(arr, 0);
+                auto s2 = PyArray_STRIDE(arr, 1);
 
                 SD block = Float64::create()
                                .set(RTC::now())
@@ -400,7 +430,7 @@ bool pythonParceQueue()
             PyObject* dict = const_cast<PyObject*>(event.args);
 
             if (!PyDict_Check(dict)) {
-                continue; // @todo: handle exception?
+                throw std::runtime_error("Can't unpack arguments for createOutputStream");
             }
 
             PyObject* id = PyDict_GetItemString(dict, "id");
@@ -408,7 +438,7 @@ bool pythonParceQueue()
             PyObject* type = PyDict_GetItemString(dict, "type");
 
             if (!PyInt_Check(id) || !PyString_Check(name) || !PyString_Check(type)) {
-                continue; // @todo: handle exception?
+                throw std::runtime_error("Failed check arguments for createOutputStream");
             }
 
             if (std::string("event") == PyString_AS_STRING(type)) {
@@ -417,12 +447,12 @@ bool pythonParceQueue()
                 if (sendId != -1) {
                     outputs[PyInt_AsLong(id)] = { sendId, Message::ID };
                 }
-            } else if (std::string("event") == PyString_AS_STRING(type)) {
+            } else if (std::string("channels") == PyString_AS_STRING(type)) {
                 PyObject* samplingRate = PyDict_GetItemString(dict, "samplingRate");
                 PyObject* channels = PyDict_GetItemString(dict, "channels");
 
                 if (!PyInt_Check(channels) || !PyFloat_Check(samplingRate)) {
-                    continue; // @todo: handle exception?
+                    throw std::runtime_error("Failed check arguments for createOutputStream [channels]");
                 }
 
                 SD type = ConnectionHeader_Float64::create()
@@ -440,8 +470,8 @@ bool pythonParceQueue()
             long int id;
             long int timeout;
             PyObject* singleShot;
-            if (!PyArg_UnpackTuple(const_cast<PyObject*>(event.args), "llO", 3, 3, &id, &timeout, &singleShot)) {
-                continue; // @todo: handle exception?
+            if (!PyArg_ParseTuple(const_cast<PyObject*>(event.args), "llO", &id, &timeout, &singleShot)) {
+                throw std::runtime_error("Can't unpack arguments for startTimer");
             }
 
             ip.startTimer(id, timeout, singleShot == Py_True);
@@ -449,8 +479,8 @@ bool pythonParceQueue()
         } break;
         case QueueMember::stopTimer: {
             long int id;
-            if (!PyArg_UnpackTuple(const_cast<PyObject*>(event.args), "l", 1, 1, &id)) {
-                continue; // @todo: handle exception?
+            if (!PyArg_ParseTuple(const_cast<PyObject*>(event.args), "l", &id)) {
+                throw std::runtime_error("Can't unpack arguments for stopTimer");
             }
 
             ip.stopTimer(id);
