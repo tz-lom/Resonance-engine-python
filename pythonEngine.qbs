@@ -17,24 +17,21 @@ Product {
 
     cpp.cxxLanguageVersion: "c++11"
 
-
-    property string pythonHome: ""
-
     Probe {
         id: pythonAndNumpyRecognizer
-        property string app: "python"
 
         property string pythonRoot
-        property var getPythonRoot: ["-c", "import sys; print(sys.exec_prefix)"]
-
         property string pythonArch
-        property var getPythonArch: ["-c", "import platform; print(platform.architecture()[0])"]
-
         property string numpyIncludeDir
-        property var getNumpyIncludeDir: ["-c", "import numpy.distutils; print(numpy.distutils.misc_util.get_numpy_include_dirs())[0]"]
 
         configure: {
+            var app = ["python"];
+            var getPythonRoot = ["-c", "import sys; print(sys.exec_prefix)"];
+            var getPythonArch = ["-c", "import platform; print(platform.architecture()[0])"];
+            var getNumpyIncludeDir = ["-c", "import numpy.distutils; print(numpy.distutils.misc_util.get_numpy_include_dirs())[0]"];
+
             var pythonArchBuffer;
+
             found = false;
             var proc = new Process();
 
@@ -45,24 +42,28 @@ Product {
                 found = false;
             }
 
-            if(proc.exec(app, getPythonArch) === 0){
-                pythonArchBuffer = proc.readStdOut().trim();
-                if(pythonArchBuffer === "64bit"){
-                    pythonArch = "x86_64"
+            if(found){
+                if(proc.exec(app, getPythonArch) === 0){
+                    pythonArchBuffer = proc.readStdOut().trim();
                     found = true;
-                }else if(pythonArchBuffer === "32bit"){
-                    pythonArch = "x86"
-                    found = true;
+                    if(pythonArchBuffer === "64bit"){
+                        pythonArch = "x86_64"
+                    }else if(pythonArchBuffer === "32bit"){
+                        pythonArch = "x86"
+                    }else{
+                        found = false;
+                    }
                 }else{
                     found = false;
                 }
             }
 
-            if(proc.exec(app, getNumpyIncludeDir) === 0){
-                numpyIncludeDir = proc.readStdOut().trim();
-                found = true;
-            }else{
-                found = false;
+            if(found){
+                if(proc.exec(app, getNumpyIncludeDir) === 0){
+                    numpyIncludeDir = proc.readStdOut().trim();
+                }else{
+                    found = false;
+                }
             }
             proc.close();
         }
@@ -79,9 +80,11 @@ Product {
         pythonAndNumpyRecognizer.pythonRoot + "/include",
         pythonAndNumpyRecognizer.numpyIncludeDir
     ]
+
     cpp.libraryPaths: [
         pythonAndNumpyRecognizer.pythonRoot + "/libs"
     ]
+
     cpp.dynamicLibraries: 'python27'
 
     Properties {
