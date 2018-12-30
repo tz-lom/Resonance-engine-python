@@ -4,7 +4,7 @@ CppApplication {
     name: "pythonEngine-test"
     
     consoleApplication: true
-    
+
     Depends { name: "pythonEngine" }
     
     cpp.includePaths: [

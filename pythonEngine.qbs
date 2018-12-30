@@ -1,4 +1,5 @@
 import qbs 1.0
+import qbs.Process
 import qbs.Probes as Probes
 
 Product {
@@ -16,6 +17,58 @@ Product {
 
     cpp.cxxLanguageVersion: "c++11"
 
+    Probe {
+        id: pythonAndNumpyRecognizer
+
+        property string pythonRoot
+        property string pythonArch
+        property string numpyIncludeDir
+
+        configure: {
+            var app = ["python"];
+            var getPythonRoot = ["-c", "import sys; print(sys.exec_prefix)"];
+            var getPythonArch = ["-c", "import platform; print(platform.architecture()[0])"];
+            var getNumpyIncludeDir = ["-c", "import numpy.distutils; print(numpy.distutils.misc_util.get_numpy_include_dirs())[0]"];
+
+            var pythonArchBuffer;
+
+            found = false;
+            var proc = new Process();
+
+            if(proc.exec(app, getPythonRoot) === 0){
+                pythonRoot = proc.readStdOut().trim();
+                found = true;
+            }else{
+                found = false;
+            }
+
+            if(found){
+                if(proc.exec(app, getPythonArch) === 0){
+                    pythonArchBuffer = proc.readStdOut().trim();
+                    found = true;
+                    if(pythonArchBuffer === "64bit"){
+                        pythonArch = "x86_64"
+                    }else if(pythonArchBuffer === "32bit"){
+                        pythonArch = "x86"
+                    }else{
+                        found = false;
+                    }
+                }else{
+                    found = false;
+                }
+            }
+
+            if(found){
+                if(proc.exec(app, getNumpyIncludeDir) === 0){
+                    numpyIncludeDir = proc.readStdOut().trim();
+                }else{
+                    found = false;
+                }
+            }
+            proc.close();
+        }
+    }
+
     cpp.includePaths: [
         "thir",
         "boost/preprocessor/include",
@@ -24,27 +77,31 @@ Product {
         "boost/predef/include",
         "boost/core/include",
         "boost/static_assert/include",
-        '/usr/lib64/python2.7/site-packages/numpy/core/include'
+        pythonAndNumpyRecognizer.pythonRoot + "/include",
+        pythonAndNumpyRecognizer.numpyIncludeDir
     ]
-    
+
+    cpp.libraryPaths: [
+        pythonAndNumpyRecognizer.pythonRoot + "/libs"
+    ]
+
+    cpp.dynamicLibraries: 'python27'
+
     Properties {
-        condition: qbs.targetOS.contains("windows")
-        cpp.defines: [
-            'WIN32',
-            '_hypot=hypot'
-        ]
-        property string pythonHome: 'c:\\Python27'
-        
-        cpp.includePaths: pythonHome + "/include"
-        cpp.libraryPaths: pythonHome + "/libs"
-        cpp.dynamicLibraries: 'python27'
+        condition: qbs.targetOS.contains("windows") && qbs.architecture === "x86"
+        cpp.defines: outer.concat(['WIN32', '_hypot=hypot'])
     }
-    
+
+    Properties {
+        condition: qbs.targetOS.contains("windows") && qbs.architecture === "x86_64"
+        cpp.defines: outer.concat(['MS_WIN64', '_hypot=hypot'])
+    }
+
     Probes.PkgConfigProbe {
         id: python
         name: "python-2.7"
     }
-    
+
     Properties {
         condition: qbs.targetOS.contains("linux")
         
