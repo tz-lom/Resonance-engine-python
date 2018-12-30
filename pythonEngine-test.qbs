@@ -25,6 +25,8 @@ CppApplication {
     
     files: [
         "test.cpp",
+        "initCode.h",
         "googletest/googletest/src/gtest-all.cc",
+        "Resonance/tests/test-script-engine-interface.hpp"
     ]
 }

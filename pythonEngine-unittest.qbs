@@ -4,7 +4,13 @@ import qbs.Probes as Probes
 CppApplication {
     name: "Unit tests"
     type: ["application", "autotest"]
-
+    
+    Depends { name: "Resonance" }
+    
+    Properties {
+        condition: Resonance != null
+        Resonance.standalone: true
+    }
 
     consoleApplication: true
 
@@ -23,7 +29,6 @@ CppApplication {
     ]
 
     cpp.dynamicLibraries: ["pthread"]
-    cpp.defines: ['RESONANCE_STANDALONE']
 
     Probes.PkgConfigProbe {
         id: python
