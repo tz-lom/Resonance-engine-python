@@ -20,15 +20,15 @@ Product {
     Probe {
         id: pythonAndNumpyRecognizer
 
-        property string pythonRoot
-        property string pythonArch
-        property string numpyIncludeDir
+        property string pythonRoot: ''
+        property string pythonArch: ''
+        property string numpyIncludeDir: ''
 
         configure: {
-            var app = ["python"];
+            var app = ["python3.7"];
             var getPythonRoot = ["-c", "import sys; print(sys.exec_prefix)"];
             var getPythonArch = ["-c", "import platform; print(platform.architecture()[0])"];
-            var getNumpyIncludeDir = ["-c", "import numpy.distutils; print(numpy.distutils.misc_util.get_numpy_include_dirs())[0]"];
+            var getNumpyIncludeDir = ["-c", "import numpy.distutils; print(numpy.distutils.misc_util.get_numpy_include_dirs()[0])"];
 
             var pythonArchBuffer;
 
@@ -85,7 +85,11 @@ Product {
         pythonAndNumpyRecognizer.pythonRoot + "/libs"
     ]
 
-    cpp.dynamicLibraries: 'python27'
+    Properties {
+        condition: qbs.targetOS.contains('windows')
+        
+        cpp.dynamicLibraries: 'python37'
+    }
 
     Properties {
         condition: qbs.targetOS.contains("windows") && qbs.architecture === "x86"
@@ -99,16 +103,17 @@ Product {
 
     Probes.PkgConfigProbe {
         id: python
-        name: "python-2.7"
+        name: "python-3.7"
     }
 
     Properties {
         condition: qbs.targetOS.contains("linux")
         
-        cpp.defines: outer.concat(python.defines)
+        cpp.defines: outer.concat(python.defines).concat(['LIBRARY_HACK='+python.libraries])
         cpp.dynamicLibraries: outer.concat(python.libraries)
         cpp.libraryPaths: outer.concat(python.libraryPaths)
         cpp.includePaths: outer.concat(python.includePaths)
+        cpp.linkerFlags: ['-export-dynamic']
     }
     
     Group {

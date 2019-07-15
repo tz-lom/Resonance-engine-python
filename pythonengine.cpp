@@ -11,14 +11,20 @@
 #include <map>
 #include <vector>
 
+#ifdef LIBRARY_HACK
+#include <dlfcn.h>
+#endif
+
 using namespace Resonance::R3;
 
 using Resonance::RTC;
 
 static InterfacePointers ip;
-static const char* engineNameString = "python";
-static const char* engineInitString = "Init python";
-static const char* engineCodeString = "Some python code";
+static const char* engineNameString = "python " PY_VERSION;
+static const char* engineInitString = "import resonance\n";
+static const char* engineCodeString = R"(from resonance import *
+createOutput(input(0), 'out')
+)";
 
 class SmartPyObject : public std::unique_ptr<PyObject, void (*)(PyObject*)> {
 public:
@@ -105,6 +111,8 @@ public:
     {
         Py_XINCREF(si);
     }
+    
+    InputStreamDescription& operator=(const InputStreamDescription&) = default;
 
     int id;
     Thir::SerializedData::rid type;
@@ -154,14 +162,12 @@ static PyObject* module;
 
 PyObject* mod_addToQueue(PyObject*, PyObject* args)
 {
-    PyStringObject* nameObj = nullptr;
+    const char *name = nullptr;
     PyObject* data = nullptr;
 
-    if (!PyArg_UnpackTuple(args, "add_to_queue", 2, 2, &nameObj, &data)) {
+    if (!PyArg_ParseTuple(args, "sO", &name, &data)) {
         Py_RETURN_FALSE;
     }
-
-    const char* name = PyString_AS_STRING(nameObj);
 
     if (std::string("sendBlockToStream") == name) {
         queue.emplace_back(QueueMember::sendBlockToStream, data);
@@ -216,13 +222,53 @@ static PyMethodDef ModuleMethods[] = {
     { nullptr, nullptr, 0, nullptr }
 };
 
-bool initializeEngine(InterfacePointers _ip, const char* code, size_t)
+#if PY_MAJOR_VERSION >= 3
+static struct PyModuleDef ModuleDefinition = {
+    PyModuleDef_HEAD_INIT,
+    "resonate",
+    nullptr,
+    -1,
+    ModuleMethods,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr
+};
+
+PyMODINIT_FUNC
+PyInit_resonate(void)
+{
+    return PyModule_Create(&ModuleDefinition);
+}
+
+#endif
+
+#define VAL(str) #str
+#define TOSTRING(str) VAL(str)
+
+bool initializeEngine(InterfacePointers _ip, const char *code, size_t)
 {
     ip = _ip;
+    
+#ifdef LIBRARY_HACK
+    dlopen("lib" TOSTRING(LIBRARY_HACK) ".so", RTLD_LAZY | RTLD_GLOBAL);
+#endif
+    
+#if PY_MAJOR_VERSION >= 3
+    Py_SetProgramName(L"pythonEngine");
+    PyImport_AppendInittab("resonate", PyInit_resonate);    
+#else
     Py_SetProgramName("pythonEngine");
+#endif
     Py_Initialize();
-    import_array1(false);
+    
+    import_array1(false)
+    
+#if PY_MAJOR_VERSION >= 3  
+    module = PyImport_ImportModule("resonate");
+#else
     module = Py_InitModule("resonate", ModuleMethods);
+#endif
 
     callback_on_prepare = PyDict_GetItemString(PyModule_GetDict(module), "do_nothing");
 
@@ -233,6 +279,7 @@ bool initializeEngine(InterfacePointers _ip, const char* code, size_t)
     callback_si_event = callback_on_prepare;
     callback_db_event = callback_on_prepare;
     callback_db_channels = callback_on_prepare;
+    callback_trace = callback_on_prepare;
 
     PyRun_SimpleString(code);
     return true;
@@ -248,9 +295,6 @@ bool prepareEngine(const char* code, size_t codeLength, const SerializedDataCont
     outputs.clear();
     inputs.clear();
     queue.clear();
-
-    (void)codeLength;
-    PyRun_SimpleString(code);
 
     SmartPyObject inputList(PyList_New(0));
     for (uint32_t i = 0; i < streamCount; ++i) {
@@ -380,6 +424,10 @@ void stopEngine()
         throw std::runtime_error("Failed to call onStop");
 }
 
+void onTimer(const int id, const uint64_t time)
+{
+}
+
 bool pythonParceQueue()
 {
     for (const QueueMember& event : queue) {
@@ -398,7 +446,7 @@ bool pythonParceQueue()
                 SD block = Message::create()
                                .set(RTC::now())
                                .set(0)
-                               .set(PyString_AsString(data))
+                               .set(std::string(PyBytes_AsString(data)))
                                .finish();
 
                 ip.sendBlock(os.id, SerializedDataContainer({ block->data(), block->size() }));
@@ -436,47 +484,47 @@ bool pythonParceQueue()
         } break;
         case QueueMember::createOutputStream: {
 
-            PyObject* dict = const_cast<PyObject*>(event.args);
+            PyObject* streamObj = const_cast<PyObject*>(event.args);
 
-            if (!PyDict_Check(dict)) {
-                throw std::runtime_error("Can't unpack arguments for createOutputStream");
-            }
+            PyObject* id = PyObject_GetAttrString(streamObj, "id");
+            PyObject* name = PyObject_GetAttrString(streamObj, "name");
+            PyObject* type = PyObject_GetAttrString(streamObj, "_source");
 
-            PyObject* id = PyDict_GetItemString(dict, "id");
-            PyObject* name = PyDict_GetItemString(dict, "name");
-            PyObject* type = PyDict_GetItemString(dict, "type");
-
-            if (!PyInt_Check(id) || !PyString_Check(name) || !PyString_Check(type)) {
+            if (!PyLong_Check(id) ) { // @todo: check all args
                 throw std::runtime_error("Failed check arguments for createOutputStream");
             }
+            
+            const char* nameStr = PyUnicode_AsUTF8(name);
+            
 
-            if (std::string("event") == PyString_AS_STRING(type)) {
+            if ((PyObject*)type->ob_type == callback_si_event) {
                 SD type = ConnectionHeader_Message::create().next().finish();
-                int sendId = ip.declareStream(PyString_AS_STRING(name), SerializedDataContainer({ type->data(), (uint32_t)type->size() }));
+                int sendId = ip.declareStream(nameStr, SerializedDataContainer({ type->data(), (uint32_t)type->size() }));
                 if (sendId != -1) {
-                    outputs[PyInt_AsLong(id)] = { sendId, Message::ID };
+                    outputs[PyLong_AsLong(id)] = { sendId, Message::ID };
                 }
-            } else if (std::string("channels") == PyString_AS_STRING(type)) {
-                PyObject* samplingRate = PyDict_GetItemString(dict, "samplingRate");
-                PyObject* channels = PyDict_GetItemString(dict, "channels");
+            } else if ((PyObject*)type->ob_type == callback_si_channels) {
+                PyObject* samplingRate = PyObject_GetAttrString(type, "samplingRate");
+                PyObject* channels = PyObject_GetAttrString(type, "channels");
 
-                if (!PyInt_Check(channels) || !PyFloat_Check(samplingRate)) {
+                if (!PyLong_Check(channels) || !PyFloat_Check(samplingRate)) {
                     throw std::runtime_error("Failed check arguments for createOutputStream [channels]");
                 }
+                
 
                 SD type = ConnectionHeader_Float64::create()
-                              .set(PyInt_AsLong(channels))
+                              .set(PyLong_AsLong(channels))
                               .set(PyFloat_AsDouble(samplingRate))
                               .finish();
-                int sendId = ip.declareStream(PyString_AS_STRING(name), SerializedDataContainer({ type->data(), (uint32_t)type->size() }));
+                int sendId = ip.declareStream(nameStr, SerializedDataContainer({ type->data(), (uint32_t)type->size() }));
 
                 if (sendId != -1) {
-                    outputs[PyInt_AsLong(id)] = { sendId, Float64::ID };
+                    outputs[PyLong_AsLong(id)] = { sendId, Float64::ID };
                 }
             }
         } break;
         case QueueMember::startTimer: {
-            long int id;
+            /*long int id;
             long int timeout;
             PyObject* singleShot;
             if (!PyArg_ParseTuple(const_cast<PyObject*>(event.args), "llO", &id, &timeout, &singleShot)) {
@@ -484,16 +532,16 @@ bool pythonParceQueue()
             }
 
             ip.startTimer(id, timeout, singleShot == Py_True);
-
+*/
         } break;
         case QueueMember::stopTimer: {
-            long int id;
+            /*long int id;
             if (!PyArg_ParseTuple(const_cast<PyObject*>(event.args), "l", &id)) {
                 throw std::runtime_error("Can't unpack arguments for stopTimer");
             }
 
             ip.stopTimer(id);
-
+*/
         } break;
         }
     }
