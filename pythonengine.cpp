@@ -45,7 +45,7 @@ public:
     {
         if(mode == Copy)
         {
-            Py_INCREF(ptr);
+            Py_XINCREF(ptr);
         }
         obj = ptr;
     }
@@ -57,13 +57,13 @@ public:
 
     SmartPyObject(const SmartPyObject &right)
     {
-        Py_INCREF(right.obj);
+        Py_XINCREF(right.obj);
         obj = right.obj;
     }
 
     SmartPyObject& operator=(const SmartPyObject &right)
     {
-        Py_INCREF(right.obj);
+        Py_XINCREF(right.obj);
         obj = right.obj;
         return *this;
     }
@@ -211,15 +211,15 @@ PyObject* mod_register_callbacks(PyObject*, PyObject* args)
         Py_RETURN_FALSE;
     }
     
-    callback_on_prepare    .reset(new_callback_on_prepare       );
-    callback_on_data_block .reset(new_callback_on_data_block);
-    callback_on_start      .reset(new_callback_on_start     );
-    callback_on_stop       .reset(new_callback_on_stop      );
-    callback_si_channels   .reset(new_callback_si_channels  );
-    callback_si_event      .reset(new_callback_si_event     );
-    callback_db_event      .reset(new_callback_db_event     );
-    callback_db_channels   .reset(new_callback_db_channels  );
-    callback_trace         .reset(new_callback_trace        );
+    callback_on_prepare    = SmartPyObject(new_callback_on_prepare   , SmartPyObject::Copy);
+    callback_on_data_block = SmartPyObject(new_callback_on_data_block, SmartPyObject::Copy);
+    callback_on_start      = SmartPyObject(new_callback_on_start     , SmartPyObject::Copy);
+    callback_on_stop       = SmartPyObject(new_callback_on_stop      , SmartPyObject::Copy);
+    callback_si_channels   = SmartPyObject(new_callback_si_channels  , SmartPyObject::Copy);
+    callback_si_event      = SmartPyObject(new_callback_si_event     , SmartPyObject::Copy);
+    callback_db_event      = SmartPyObject(new_callback_db_event     , SmartPyObject::Copy);
+    callback_db_channels   = SmartPyObject(new_callback_db_channels  , SmartPyObject::Copy);
+    callback_trace         = SmartPyObject(new_callback_trace        , SmartPyObject::Copy);
 
     Py_RETURN_TRUE;
 }
