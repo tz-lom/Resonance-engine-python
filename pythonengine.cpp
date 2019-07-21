@@ -107,41 +107,10 @@ typedef struct {
     Thir::SerializedData::rid type;
 } OutputStreamDescription;
 
-class InputStreamDescription {
-public:
-    InputStreamDescription()
-        : id(0)
-        , type(0)
-        , si(nullptr)
-    {
-    }
-
-    InputStreamDescription(int id, Thir::SerializedData::rid type, PyObject* si)
-        : id(id)
-        , type(type)
-        , si(si)
-    {
-        Py_XINCREF(si);
-    }
-
-    ~InputStreamDescription()
-    {
-        Py_XDECREF(si);
-    }
-
-    InputStreamDescription(const InputStreamDescription& orig)
-        : id(orig.id)
-        , type(orig.type)
-        , si(orig.si)
-    {
-        Py_XINCREF(si);
-    }
-    
-    InputStreamDescription& operator=(const InputStreamDescription&) = default;
-
+struct InputStreamDescription {
     int id;
     Thir::SerializedData::rid type;
-    PyObject* si;
+    SmartPyObject si;
 };
 
 static std::map<int, OutputStreamDescription> outputs;
@@ -159,8 +128,7 @@ static SmartPyObject callback_trace = nullptr;
 
 void trace(PyObject* obj)
 {
-    SmartPyObject arglist = Py_BuildValue("(O)", obj);
-    SmartPyObject result = PyObject_CallObject(callback_trace.get(), arglist.get());
+    SmartPyObject result = PyObject_CallFunction(callback_trace.get(), "O", obj);
     if (!result)
         throw std::runtime_error("Failed to call trace");
 }
@@ -194,16 +162,16 @@ PyObject* mod_addToQueue(PyObject*, PyObject* args)
     }
 
     if (std::string("sendBlockToStream") == name) {
-        queue.emplace_back(QueueMember{QueueMember::sendBlockToStream, data});
+        queue.emplace_back(QueueMember{QueueMember::sendBlockToStream, SmartPyObject(data, SmartPyObject::Copy)});
         Py_RETURN_TRUE;
     } else if (std::string("createOutputStream") == name) {
-        queue.emplace_back(QueueMember{QueueMember::createOutputStream, data});
+        queue.emplace_back(QueueMember{QueueMember::createOutputStream, SmartPyObject(data, SmartPyObject::Copy)});
         Py_RETURN_TRUE;
     } else if (std::string("startTimer") == name) {
-        queue.emplace_back(QueueMember{QueueMember::startTimer, data});
+        queue.emplace_back(QueueMember{QueueMember::startTimer, SmartPyObject(data, SmartPyObject::Copy)});
         Py_RETURN_TRUE;
     } else if (std::string("stopTimer") == name) {
-        queue.emplace_back(QueueMember{QueueMember::stopTimer, data});
+        queue.emplace_back(QueueMember{QueueMember::stopTimer, SmartPyObject(data, SmartPyObject::Copy)});
         Py_RETURN_TRUE;
     } else {
         PyErr_BadInternalCall();
@@ -342,7 +310,7 @@ bool prepareEngine(const char* code, size_t codeLength, const SerializedDataCont
 
     SmartPyObject inputList(PyList_New(0));
     for (uint32_t i = 0; i < streamCount; ++i) {
-        Thir::SerializedData data((const char*)streams[i].data, streams[i].size);
+        Thir::SerializedData data(static_cast<const char*>(streams[i].data), streams[i].size);
         //data.extractString<ConnectionHeaderContainer::name>()
         Thir::SerializedData type = data.field<ConnectionHeaderContainer::type>();
 
@@ -350,7 +318,7 @@ bool prepareEngine(const char* code, size_t codeLength, const SerializedDataCont
         //case ConnectionHeader_Int32::ID:
         //case ConnectionHeader_Int64::ID:
         case ConnectionHeader_Float64::ID: {
-            PyObject* si = PyObject_CallFunction(
+            SmartPyObject si = PyObject_CallFunction(
                         callback_si_channels.get(), 
                         "ifis",
                         type.field<ConnectionHeader_Float64::channels>().value(),
@@ -358,41 +326,38 @@ bool prepareEngine(const char* code, size_t codeLength, const SerializedDataCont
                         i + 1,
                         data.field<ConnectionHeaderContainer::name>().value().c_str()
                     );
-            PyObject_SetAttrString(si, "online", Py_True);
             
-            if (si == nullptr)
+            if (si.get() == nullptr)
                 throw std::runtime_error("Failed to construct Float64 stream definition");
-
-            if (PyList_Append(inputList.get(), si) != 0) {
+            
+            PyObject_SetAttrString(si.get(), "online", Py_True);
+            
+            if (PyList_Append(inputList.get(), si.get()) != 0) {
                 throw std::runtime_error("Failed to populate list ");
             }
 
-            inputs[i] = InputStreamDescription(static_cast<int>(i + 1), Float64::ID, si);
+            inputs.emplace(i, InputStreamDescription{static_cast<int>(i + 1), Float64::ID, si});
         } break;
 
         case ConnectionHeader_Message::ID: {
-            SmartPyObject arglist(Py_BuildValue(
-                "(is)",
-                i + 1,
-                data.field<ConnectionHeaderContainer::name>().value().c_str()));
-
-            PyObject* si = PyObject_CallObject(callback_si_event.get(), arglist.get());
-            PyObject_SetAttrString(si, "online", Py_True);
-
-            if (si == nullptr)
+            SmartPyObject si = PyObject_CallFunction(callback_si_event.get(), "is", i + 1,
+                                               data.field<ConnectionHeaderContainer::name>().value().c_str());
+            if (si.get() == nullptr)
                 throw std::runtime_error("Failed to construct Message stream definition");
+            
+            PyObject_SetAttrString(si.get(), "online", Py_True);
 
-            if (PyList_Append(inputList.get(), si) != 0) {
+
+            if (PyList_Append(inputList.get(), si.get()) != 0) {
                 throw std::runtime_error("Failed to populate list ");
             }
 
-            inputs[i] = InputStreamDescription(static_cast<int>(i + 1), Message::ID, si);
+            inputs.emplace(i, InputStreamDescription{static_cast<int>(i + 1), Message::ID, si});
         } break;
         }
     }
 
-    SmartPyObject arglist(Py_BuildValue("(s,O)", code, inputList.get()));
-    SmartPyObject result(PyObject_CallObject(callback_on_prepare.get(), arglist.get()));
+    SmartPyObject result(PyObject_CallFunction(callback_on_prepare.get(), "sO", code, inputList.get()));
 
     if (!result)
         throw std::runtime_error("Failed to call onPrepare");
@@ -403,23 +368,26 @@ bool prepareEngine(const char* code, size_t codeLength, const SerializedDataCont
 void blockReceived(const int id, const SerializedDataContainer block)
 {
 
-    auto is = inputs[id];
+    auto iterator = inputs.find(id);
+    if(iterator == inputs.end())
+    {
+        throw std::runtime_error("Failed to retrieve stream information for block");
+    }
+    auto is = iterator->second;
     switch (is.type) {
     case Message::ID: {
-
         Thir::SerializedData data(block.data, block.size);
 
-        SmartPyObject arglist(Py_BuildValue("(Ols)",
-            is.si,
-            data.field<Message::created>().value(),
-            data.field<Message::message>().value().c_str()));
-        SmartPyObject result(PyObject_CallObject(callback_db_event.get(), arglist.get()));
+        SmartPyObject result(PyObject_CallFunction(
+                                 callback_db_event.get(), 
+                                 "Ols",
+                                 is.si.get(),
+                                 data.field<Message::created>().value(),
+                                 data.field<Message::message>().value().c_str()));
         if (!result)
             throw std::runtime_error("Failed to call dbEvent");
 
-        SmartPyObject arglist2(Py_BuildValue("(O)", result.get()));
-
-        SmartPyObject result2(PyObject_CallObject(callback_on_data_block.get(), arglist2.get()));
+        SmartPyObject result2(PyObject_CallFunction(callback_on_data_block.get(), "O", result.get()));
         if (!result2)
             throw std::runtime_error("Failed to call onDataBlock for Message");
     } break;
@@ -431,23 +399,21 @@ void blockReceived(const int id, const SerializedDataContainer block)
         int samples = data.field<Float64::samples>().value();
         npy_intp dims[2] = { static_cast<npy_intp>(samples), static_cast<npy_intp>(vec.size() / samples) };
 
-        PyObject* pyDataBorrowed = PyArray_SimpleNewFromData(2, dims, NPY_FLOAT64, reinterpret_cast<void*>(vec.data()));
-        PyObject* pyData = PyArray_Copy(reinterpret_cast<PyArrayObject*>(pyDataBorrowed));
+        SmartPyObject pyDataBorrowed = PyArray_SimpleNewFromData(2, dims, NPY_FLOAT64, reinterpret_cast<void*>(vec.data()));
+        SmartPyObject pyData = PyArray_Copy(reinterpret_cast<PyArrayObject*>(pyDataBorrowed.get()));
 
         SmartPyObject result(PyObject_CallFunction(
                                  callback_db_channels.get(),
                                  "OlO",
-                                 is.si,
+                                 is.si.get(),
                                  data.field<Float64::created>().value(),
-                                 pyData
+                                 pyData.get()
                                  ));
 
         if (!result)
             throw std::runtime_error("Failed to call dbChannels");
 
-        SmartPyObject arglist2(Py_BuildValue("(O)", result.get()));
-
-        SmartPyObject result2(PyObject_CallObject(callback_on_data_block.get(), arglist2.get()));
+        SmartPyObject result2(PyObject_CallFunction(callback_on_data_block.get(), "O", result.get()));
         if (!result2)
             throw std::runtime_error("Failed to call onDataBlock for Float64");
     } break;
@@ -458,16 +424,14 @@ void blockReceived(const int id, const SerializedDataContainer block)
 
 void startEngine()
 {
-    SmartPyObject arglist = PyTuple_New(0);
-    SmartPyObject result = PyObject_CallObject(callback_on_start.get(), arglist.get());
+    SmartPyObject result = PyObject_CallFunction(callback_on_start.get(), "");
     if (!result)
         throw std::runtime_error("Failed to call onStart");
 }
 
 void stopEngine()
 {
-    SmartPyObject arglist = PyTuple_New(0);
-    SmartPyObject result = PyObject_CallObject(callback_on_stop.get(), arglist.get());
+    SmartPyObject result = PyObject_CallFunction(callback_on_stop.get(), "");
     if (!result)
         throw std::runtime_error("Failed to call onStop");
 }
