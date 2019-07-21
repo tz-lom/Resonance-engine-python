@@ -22,6 +22,8 @@ CppApplication {
     
     cpp.dynamicLibraries: ["pthread"]
     cpp.defines: ['RESONANCE_STANDALONE']
+    cpp.cxxLanguageVersion: "c++11"
+
     
     files: [
         "test.cpp",
