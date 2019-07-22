@@ -320,7 +320,7 @@ bool prepareEngine(const char* code, size_t codeLength, const SerializedDataCont
         case ConnectionHeader_Float64::ID: {
             SmartPyObject si = PyObject_CallFunction(
                         callback_si_channels.get(), 
-                        "ifis",
+                        "IdIs",
                         type.field<ConnectionHeader_Float64::channels>().value(),
                         type.field<ConnectionHeader_Float64::samplingRate>().value(),
                         i + 1,
@@ -340,7 +340,7 @@ bool prepareEngine(const char* code, size_t codeLength, const SerializedDataCont
         } break;
 
         case ConnectionHeader_Message::ID: {
-            SmartPyObject si = PyObject_CallFunction(callback_si_event.get(), "is", i + 1,
+            SmartPyObject si = PyObject_CallFunction(callback_si_event.get(), "Is", i + 1,
                                                data.field<ConnectionHeaderContainer::name>().value().c_str());
             if (si.get() == nullptr)
                 throw std::runtime_error("Failed to construct Message stream definition");
@@ -380,7 +380,7 @@ void blockReceived(const int id, const SerializedDataContainer block)
 
         SmartPyObject result(PyObject_CallFunction(
                                  callback_db_event.get(), 
-                                 "Ols",
+                                 "OKs",
                                  is.si.get(),
                                  data.field<Message::created>().value(),
                                  data.field<Message::message>().value().c_str()));
@@ -404,7 +404,7 @@ void blockReceived(const int id, const SerializedDataContainer block)
 
         SmartPyObject result(PyObject_CallFunction(
                                  callback_db_channels.get(),
-                                 "OlO",
+                                 "OKO",
                                  is.si.get(),
                                  data.field<Float64::created>().value(),
                                  pyData.get()
