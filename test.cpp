@@ -4,6 +4,6 @@
 
 
 #include "initCode.h"
-char engineNameReference[] = "python 3.7";
+static char engineNameReference[] = "python 3.7";
 
 #include "Resonance/tests/test-script-engine-interface.hpp"

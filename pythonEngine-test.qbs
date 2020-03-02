@@ -6,29 +6,23 @@ CppApplication {
     consoleApplication: true
 
     Depends { name: "pythonEngine" }
+    Depends { name: "boost" }
+    Depends { name: "gtest" }
+    
     
     cpp.includePaths: [
         "Resonance/include",
-        "googletest/googletest/include",
-        "googletest/googletest",
-        "thir",
-        "boost/preprocessor/include",
-        "boost/endian/include",
-        "boost/config/include",
-        "boost/predef/include",
-        "boost/core/include",
-        "boost/static_assert/include",
+        "thir"
     ]
     
     cpp.dynamicLibraries: ["pthread"]
-    cpp.defines: ['RESONANCE_STANDALONE']
+    cpp.defines: ['RESONANCE_STANDALONE', 'RESONANCE_EXPOSE_PROTOCOL']
     cpp.cxxLanguageVersion: "c++11"
 
     
     files: [
         "test.cpp",
         "initCode.h",
-        "googletest/googletest/src/gtest-all.cc",
         "Resonance/tests/test-script-engine-interface.hpp"
     ]
 }

@@ -5,6 +5,7 @@ import qbs.Probes as Probes
 Product {
     Depends { name: "Resonance" }
     Depends { name: "cpp" }
+    Depends { name: "boost" }
     
     Properties {
         condition: Resonance != null
@@ -16,6 +17,7 @@ Product {
     files: [ "pythonengine.cpp" ]
 
     cpp.cxxLanguageVersion: "c++11"
+    cpp.defines: "RESONANCE_EXPOSE_PROTOCOL"
 
     Probe {
         id: pythonAndNumpyRecognizer
@@ -69,20 +71,10 @@ Product {
         }
     }
 
+    
     cpp.includePaths: [
-        "thir",
-        "boost/preprocessor/include",
-        "boost/endian/include",
-        "boost/config/include",
-        "boost/predef/include",
-        "boost/core/include",
-        "boost/static_assert/include",
-        pythonAndNumpyRecognizer.pythonRoot + "/include",
-        pythonAndNumpyRecognizer.numpyIncludeDir
-    ]
-
-    cpp.libraryPaths: [
-        pythonAndNumpyRecognizer.pythonRoot + "/libs"
+        "Resonance/include",
+        "thir"
     ]
 
     Properties {
@@ -90,7 +82,7 @@ Product {
         
         cpp.dynamicLibraries: 'python37'
     }
-
+/*
     Properties {
         condition: qbs.targetOS.contains("windows") && qbs.architecture === "x86"
         cpp.defines: outer.concat(['WIN32', '_hypot=hypot'])
@@ -100,7 +92,7 @@ Product {
         condition: qbs.targetOS.contains("windows") && qbs.architecture === "x86_64"
         cpp.defines: outer.concat(['MS_WIN64', '_hypot=hypot'])
     }
-
+*/
     Probes.PkgConfigProbe {
         id: python
         name: "python-3.7"
@@ -109,12 +101,13 @@ Product {
     Properties {
         condition: qbs.targetOS.contains("linux")
         
-        cpp.defines: outer.concat(python.defines).concat(['LIBRARY_HACK='+python.libraries])
+        cpp.defines: outer.concat(python.defines) //.concat(['LIBRARY_HACK='+python.libraries])
         cpp.dynamicLibraries: outer.concat(python.libraries)
         cpp.libraryPaths: outer.concat(python.libraryPaths)
         cpp.includePaths: outer.concat(python.includePaths)
         cpp.linkerFlags: ['-export-dynamic']
     }
+
     
     Group {
         name: "Install module"

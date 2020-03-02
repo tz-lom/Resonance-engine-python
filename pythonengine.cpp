@@ -5,10 +5,8 @@
 
 #include <Resonance/scriptengineinterface.h>
 
-#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
-
-#include <Python.h>
-#include <numpy/arrayobject.h>
+#include <boost/python.hpp>
+#include <boost/python/numpy.hpp>
 
 #include <Resonance/protocol.cpp>
 #include <Resonance/rtc.cpp>
@@ -16,11 +14,8 @@
 #include <map>
 #include <vector>
 
-#ifdef LIBRARY_HACK
-#include <dlfcn.h>
-#endif
-
-#include <boost/preprocessor/stringize.hpp>
+namespace py = boost::python;
+namespace np = boost::python::numpy;
 
 using namespace Resonance::R3;
 
@@ -32,7 +27,7 @@ static const char* engineInitString = "import resonance\n";
 static const char* engineCodeString = R"(from resonance import *
 createOutput(input(0), 'out')
 )";
-
+/*
 class SmartPyObject
 {
 public:
@@ -89,7 +84,7 @@ public:
 private:
     PyObject *obj;
 };
-
+*/
 struct QueueMember {
     enum Type {
         sendBlockToStream,
@@ -97,9 +92,13 @@ struct QueueMember {
         startTimer,
         stopTimer
     };
+    
+    QueueMember(const Type _type, const py::object _args):
+        type(_type),
+        args(_args){}
 
     const Type type;
-    const SmartPyObject args;
+    const py::object args;
 };
 
 typedef struct {
@@ -110,27 +109,26 @@ typedef struct {
 struct InputStreamDescription {
     int id;
     Thir::SerializedData::rid type;
-    SmartPyObject si;
+    py::object si;
 };
 
 static std::map<int, OutputStreamDescription> outputs;
 static std::map<int, InputStreamDescription> inputs;
 static std::vector<QueueMember> queue;
-static SmartPyObject callback_si_channels = nullptr;
-static SmartPyObject callback_si_event = nullptr;
-static SmartPyObject callback_db_event = nullptr;
-static SmartPyObject callback_db_channels = nullptr;
-static SmartPyObject callback_on_prepare = nullptr;
-static SmartPyObject callback_on_data_block = nullptr;
-static SmartPyObject callback_on_start = nullptr;
-static SmartPyObject callback_on_stop = nullptr;
-static SmartPyObject callback_trace = nullptr;
 
-void trace(PyObject* obj)
+static py::object callback_si_channels;
+static py::object callback_si_event;
+static py::object callback_db_event;
+static py::object callback_db_channels;
+static py::object callback_on_prepare;
+static py::object callback_on_data_block;
+static py::object callback_on_start;
+static py::object callback_on_stop;
+static py::object callback_trace;
+
+void trace(py::object obj)
 {
-    SmartPyObject result = PyObject_CallFunction(callback_trace.get(), "O", obj);
-    if (!result)
-        throw std::runtime_error("Failed to call trace");
+    callback_trace(obj);
 }
 
 bool pythonParceQueue();
@@ -150,139 +148,77 @@ const char* engineCodeDefault()
     return engineCodeString;
 }
 
-static PyObject* module;
-
-PyObject* mod_addToQueue(PyObject*, PyObject* args)
+bool mod_addToQueue(py::str name, py::object data)
 {
-    const char *name = nullptr;
-    PyObject* data = nullptr;
-
-    if (!PyArg_ParseTuple(args, "sO", &name, &data)) {
-        Py_RETURN_FALSE;
-    }
 
     if (std::string("sendBlockToStream") == name) {
-        queue.emplace_back(QueueMember{QueueMember::sendBlockToStream, SmartPyObject(data, SmartPyObject::Copy)});
-        Py_RETURN_TRUE;
+        queue.emplace_back(QueueMember::sendBlockToStream, data);
+        return true;
     } else if (std::string("createOutputStream") == name) {
-        queue.emplace_back(QueueMember{QueueMember::createOutputStream, SmartPyObject(data, SmartPyObject::Copy)});
-        Py_RETURN_TRUE;
+        queue.emplace_back(QueueMember::createOutputStream, data);
+        return true;
     } else if (std::string("startTimer") == name) {
-        queue.emplace_back(QueueMember{QueueMember::startTimer, SmartPyObject(data, SmartPyObject::Copy)});
-        Py_RETURN_TRUE;
+        queue.emplace_back(QueueMember::startTimer, data);
+        return true;
     } else if (std::string("stopTimer") == name) {
-        queue.emplace_back(QueueMember{QueueMember::stopTimer, SmartPyObject(data, SmartPyObject::Copy)});
-        Py_RETURN_TRUE;
+        queue.emplace_back(QueueMember::stopTimer, data);
+        return true;
     } else {
         PyErr_BadInternalCall();
-        Py_XDECREF(data);
-        Py_RETURN_FALSE;
+        return false;
     }
 }
 
-PyObject* mod_do_nothing(PyObject*, PyObject*)
+void mod_do_nothing(py::object )
 {
-    Py_RETURN_NONE;
 }
 
-PyObject* mod_register_callbacks(PyObject*, PyObject* args)
+void mod_register_callbacks(py::object new_callback_on_prepare,
+                            py::object new_callback_on_data_block,
+                            py::object new_callback_on_start,
+                            py::object new_callback_on_stop,
+                            py::object new_callback_si_channels,
+                            py::object new_callback_si_event,
+                            py::object new_callback_db_event,
+                            py::object new_callback_db_channels,
+                            py::object new_callback_trace)
 {
-
-    PyObject *new_callback_on_prepare = nullptr,
-            *new_callback_on_data_block = nullptr,
-            *new_callback_on_start = nullptr,
-            *new_callback_on_stop = nullptr,
-            *new_callback_si_channels = nullptr,
-            *new_callback_si_event = nullptr,
-            *new_callback_db_event = nullptr,
-            *new_callback_db_channels = nullptr,
-            *new_callback_trace = nullptr;
-    
-    if (!PyArg_UnpackTuple(args, "register_callbacks", 8, 9,
-            &new_callback_on_prepare,
-            &new_callback_on_data_block,
-            &new_callback_on_start,
-            &new_callback_on_stop,
-            &new_callback_si_channels,
-            &new_callback_si_event,
-            &new_callback_db_event,
-            &new_callback_db_channels,
-            &new_callback_trace)) {
-        Py_RETURN_FALSE;
-    }
-    
-    callback_on_prepare    = SmartPyObject(new_callback_on_prepare   , SmartPyObject::Copy);
-    callback_on_data_block = SmartPyObject(new_callback_on_data_block, SmartPyObject::Copy);
-    callback_on_start      = SmartPyObject(new_callback_on_start     , SmartPyObject::Copy);
-    callback_on_stop       = SmartPyObject(new_callback_on_stop      , SmartPyObject::Copy);
-    callback_si_channels   = SmartPyObject(new_callback_si_channels  , SmartPyObject::Copy);
-    callback_si_event      = SmartPyObject(new_callback_si_event     , SmartPyObject::Copy);
-    callback_db_event      = SmartPyObject(new_callback_db_event     , SmartPyObject::Copy);
-    callback_db_channels   = SmartPyObject(new_callback_db_channels  , SmartPyObject::Copy);
-    callback_trace         = SmartPyObject(new_callback_trace        , SmartPyObject::Copy);
-
-    Py_RETURN_TRUE;
+    callback_on_prepare    = new_callback_on_prepare   ;
+    callback_on_data_block = new_callback_on_data_block;
+    callback_on_start      = new_callback_on_start     ;
+    callback_on_stop       = new_callback_on_stop      ;
+    callback_si_channels   = new_callback_si_channels  ;
+    callback_si_event      = new_callback_si_event     ;
+    callback_db_event      = new_callback_db_event     ;
+    callback_db_channels   = new_callback_db_channels  ;
+    callback_trace         = new_callback_trace        ;
 }
 
-static PyMethodDef ModuleMethods[] = {
-    { "register_callbacks", mod_register_callbacks, METH_VARARGS,
-        "Register callbacks for Resonance runtime." },
-    { "add_to_queue", mod_addToQueue, METH_VARARGS,
-        "Adds data to resonance event queue" },
-    { "do_nothing", mod_do_nothing, METH_VARARGS,
-        "Used as a default value for callbacks" },
-    { nullptr, nullptr, 0, nullptr }
-};
 
-#if PY_MAJOR_VERSION >= 3
-static struct PyModuleDef ModuleDefinition = {
-    PyModuleDef_HEAD_INIT,
-    "resonate",
-    nullptr,
-    -1,
-    ModuleMethods,
-    nullptr,
-    nullptr,
-    nullptr,
-    nullptr
-};
+#define RESONANCE_PACKAGE_RUNTIME_NAME resonate
+constexpr auto do_nothing = "do_nothing";
 
-PyMODINIT_FUNC
-PyInit_resonate(void)
+BOOST_PYTHON_MODULE(RESONANCE_PACKAGE_RUNTIME_NAME)
 {
-    return PyModule_Create(&ModuleDefinition);
+    def("add_to_queue", &mod_addToQueue);
+    def("register_callbacks", &mod_register_callbacks);
+    def(do_nothing, &mod_do_nothing);
 }
 
-#endif
-
-#define VAL(str) #str
-#define TOSTRING(str) VAL(str)
-
-bool initializeEngine(InterfacePointers _ip, const char *code, size_t)
+bool initializeEngine(InterfacePointers _ip, const char* code, size_t code_length)
 {
     ip = _ip;
     
 #ifdef LIBRARY_HACK
-    dlopen("lib" TOSTRING(LIBRARY_HACK) ".so", RTLD_LAZY | RTLD_GLOBAL);
+    dlopen("lib" BOOST_PP_STRINGIZE(LIBRARY_HACK) ".so", RTLD_LAZY | RTLD_GLOBAL);
 #endif
     
-#if PY_MAJOR_VERSION >= 3
     Py_SetProgramName(L"pythonEngine");
-    PyImport_AppendInittab("resonate", PyInit_resonate);    
-#else
-    Py_SetProgramName("pythonEngine");
-#endif
+    PyImport_AppendInittab("resonate", &PyInit_resonate);
     Py_Initialize();
+    np::initialize();
     
-    import_array1(false)
-    
-#if PY_MAJOR_VERSION >= 3  
-    module = PyImport_ImportModule("resonate");
-#else
-    module = Py_InitModule("resonate", ModuleMethods);
-#endif
-
-    callback_on_prepare = SmartPyObject(PyDict_GetItemString(PyModule_GetDict(module), "do_nothing"));
+    //callback_on_prepare = py::import(BOOST_PP_STRINGIZE(RESONANCE_PACKAGE_RUNTIME_NAME)).attr(do_nothing);
 
     callback_on_data_block = callback_on_prepare;
     callback_on_start = callback_on_prepare;
@@ -293,13 +229,36 @@ bool initializeEngine(InterfacePointers _ip, const char *code, size_t)
     callback_db_channels = callback_on_prepare;
     callback_trace = callback_on_prepare;
 
-    PyRun_SimpleString(code);
+    try{
+        py::object main_module = py::import("__main__");
+        py::object main_namespace = main_module.attr("__dict__");
+
+
+        py::exec(py::str(code, code_length), main_namespace, main_namespace);
+    }
+    catch(py::error_already_set &e)
+    {
+        PyObject *ptype, *pvalue, *ptraceback;
+        PyErr_Fetch(&ptype, &pvalue, &ptraceback);
+    
+        py::handle<> hType(ptype);
+        py::object extype(hType);
+        py::handle<> hTraceback(ptraceback);
+        py::object traceback(hTraceback);
+    
+        //Extract error message
+        std::string strErrorMessage = py::extract<std::string>(pvalue);
+        std::cout << "Error:" << strErrorMessage;
+        
+        return false;
+    }
+    
     return true;
 }
 
 void freeEngine()
 {
-    Py_Finalize();
+    //Py_Finalize(); disabled because of bug in boost
 }
 
 bool prepareEngine(const char* code, size_t codeLength, const SerializedDataContainer* const streams, size_t streamCount)
@@ -308,7 +267,7 @@ bool prepareEngine(const char* code, size_t codeLength, const SerializedDataCont
     inputs.clear();
     queue.clear();
 
-    SmartPyObject inputList(PyList_New(0));
+    py::list inputList;
     for (uint32_t i = 0; i < streamCount; ++i) {
         Thir::SerializedData data(static_cast<const char*>(streams[i].data), streams[i].size);
         //data.extractString<ConnectionHeaderContainer::name>()
@@ -318,49 +277,41 @@ bool prepareEngine(const char* code, size_t codeLength, const SerializedDataCont
         //case ConnectionHeader_Int32::ID:
         //case ConnectionHeader_Int64::ID:
         case ConnectionHeader_Float64::ID: {
-            SmartPyObject si = PyObject_CallFunction(
-                        callback_si_channels.get(), 
-                        "IdIs",
+            
+            const auto name = data.field<ConnectionHeaderContainer::name>().value();
+            
+            py::object si = callback_si_channels(
                         type.field<ConnectionHeader_Float64::channels>().value(),
                         type.field<ConnectionHeader_Float64::samplingRate>().value(),
                         i + 1,
-                        data.field<ConnectionHeaderContainer::name>().value().c_str()
+                        py::str(name.c_str(), name.size())
                     );
             
-            if (si.get() == nullptr)
+            if (si.is_none())
                 throw std::runtime_error("Failed to construct Float64 stream definition");
             
-            PyObject_SetAttrString(si.get(), "online", Py_True);
+            si.attr("online")=true;
             
-            if (PyList_Append(inputList.get(), si.get()) != 0) {
-                throw std::runtime_error("Failed to populate list ");
-            }
+            inputList.append(si);
 
             inputs.emplace(i, InputStreamDescription{static_cast<int>(i + 1), Float64::ID, si});
         } break;
 
         case ConnectionHeader_Message::ID: {
-            SmartPyObject si = PyObject_CallFunction(callback_si_event.get(), "Is", i + 1,
-                                               data.field<ConnectionHeaderContainer::name>().value().c_str());
-            if (si.get() == nullptr)
+            const auto name = data.field<ConnectionHeaderContainer::name>().value();
+            py::object si = callback_si_event(i + 1, py::str(name.c_str(), name.size()));
+            if (si.is_none())
                 throw std::runtime_error("Failed to construct Message stream definition");
             
-            PyObject_SetAttrString(si.get(), "online", Py_True);
-
-
-            if (PyList_Append(inputList.get(), si.get()) != 0) {
-                throw std::runtime_error("Failed to populate list ");
-            }
+            si.attr("online") = true;
+            inputList.append(si);
 
             inputs.emplace(i, InputStreamDescription{static_cast<int>(i + 1), Message::ID, si});
         } break;
         }
     }
 
-    SmartPyObject result(PyObject_CallFunction(callback_on_prepare.get(), "sO", code, inputList.get()));
-
-    if (!result)
-        throw std::runtime_error("Failed to call onPrepare");
+    callback_on_prepare(py::str(code, codeLength), inputList);
 
     return pythonParceQueue();
 }
@@ -374,22 +325,16 @@ void blockReceived(const int id, const SerializedDataContainer block)
         throw std::runtime_error("Failed to retrieve stream information for block");
     }
     auto is = iterator->second;
+
     switch (is.type) {
     case Message::ID: {
         Thir::SerializedData data(block.data, block.size);
 
-        SmartPyObject result(PyObject_CallFunction(
-                                 callback_db_event.get(), 
-                                 "OKs",
-                                 is.si.get(),
+        auto block = callback_db_event(is.si,
                                  data.field<Message::created>().value(),
-                                 data.field<Message::message>().value().c_str()));
-        if (!result)
-            throw std::runtime_error("Failed to call dbEvent");
+                                 data.field<Message::message>().value());
 
-        SmartPyObject result2(PyObject_CallFunction(callback_on_data_block.get(), "O", result.get()));
-        if (!result2)
-            throw std::runtime_error("Failed to call onDataBlock for Message");
+        callback_on_data_block(block);
     } break;
     case Float64::ID: {
         Thir::SerializedData data(block.data, block.size);
@@ -397,25 +342,16 @@ void blockReceived(const int id, const SerializedDataContainer block)
         auto vec = data.field<Float64::data>().toVector();
 
         int samples = data.field<Float64::samples>().value();
-        npy_intp dims[2] = { static_cast<npy_intp>(samples), static_cast<npy_intp>(vec.size() / samples) };
+        const auto channels =  static_cast<Py_intptr_t>(vec.size() / samples);
+        
+        auto pyData = np::from_data(
+                    reinterpret_cast<void*>(vec.data()), np::dtype::get_builtin<double>(), 
+                    py::make_tuple(samples, channels),
+                    py::make_tuple(sizeof(double)*channels, sizeof(double)),
+                    py::object()).copy();
 
-        SmartPyObject pyDataBorrowed = PyArray_SimpleNewFromData(2, dims, NPY_FLOAT64, reinterpret_cast<void*>(vec.data()));
-        SmartPyObject pyData = PyArray_Copy(reinterpret_cast<PyArrayObject*>(pyDataBorrowed.get()));
-
-        SmartPyObject result(PyObject_CallFunction(
-                                 callback_db_channels.get(),
-                                 "OKO",
-                                 is.si.get(),
-                                 data.field<Float64::created>().value(),
-                                 pyData.get()
-                                 ));
-
-        if (!result)
-            throw std::runtime_error("Failed to call dbChannels");
-
-        SmartPyObject result2(PyObject_CallFunction(callback_on_data_block.get(), "O", result.get()));
-        if (!result2)
-            throw std::runtime_error("Failed to call onDataBlock for Float64");
+        auto block = callback_db_channels(is.si, data.field<Float64::created>().value(), pyData);
+        callback_on_data_block(block);
     } break;
     }
 
@@ -424,19 +360,15 @@ void blockReceived(const int id, const SerializedDataContainer block)
 
 void startEngine()
 {
-    SmartPyObject result = PyObject_CallFunction(callback_on_start.get(), "");
-    if (!result)
-        throw std::runtime_error("Failed to call onStart");
+    callback_on_start();
 }
 
 void stopEngine()
 {
-    SmartPyObject result = PyObject_CallFunction(callback_on_stop.get(), "");
-    if (!result)
-        throw std::runtime_error("Failed to call onStop");
+    callback_on_stop();
 }
 
-void onTimer(const int id, const uint64_t time)
+void onTimer(const int /*id*/, const uint64_t /*time*/)
 {
 }
 
@@ -445,47 +377,38 @@ bool pythonParceQueue()
     for (const QueueMember& event : queue) {
         switch (event.type) {
         case QueueMember::sendBlockToStream: {
-            PyObject* streamInfo;
-            PyObject* data;
+            py::object streamInfo = event.args[0];
+            auto data = event.args[1];
             
-            if (!PyArg_ParseTuple(const_cast<PyObject*>(event.args.get()), "OO", &streamInfo, &data)) {
-                throw std::runtime_error("Can't unpack arguments for sendBlockToStream");
-            }
-            
-            auto idObject = PyObject_GetAttrString(streamInfo, "id");
-
-            auto id = PyLong_AsSize_t(idObject);
+            int id = py::extract<int>(streamInfo.attr("id"));
             
             auto os = outputs[id];
 
             switch (os.type) {
             case Message::ID: {
-                SD block = Message::create()
+                SerializedData block = Message::create()
                                .set(RTC::now())
                                .set(0)
-                               .set(std::string(PyUnicode_AsUTF8(data)))
+                               .set(py::extract<std::string>(data))
                                .finish();
 
                 ip.sendBlock(os.id, SerializedDataContainer({ block->data(), block->size() }));
             } break;
             case Float64::ID: {
-                if (!PyArray_Check(data)) {
-                    throw std::runtime_error("Can't unpack arguments for sendBlockToStream [channels]");
-                }
-                PyArrayObject* arr = reinterpret_cast<PyArrayObject*>(data);
-                if (PyArray_NDIM(arr) != 2) {
+                np::ndarray arr = py::extract<np::ndarray>(data);
+                if (arr.get_nd() != 2) {
                     throw std::runtime_error("Can't unpack arguments for sendBlockToStream [channels dim is wrong]");
                 }
-                if (PyArray_TYPE(arr) != NPY_FLOAT64) {
+                if (arr.get_dtype() != np::dtype::get_builtin<double>()) {
                     throw std::runtime_error("Can't unpack arguments for sendBlockToStream [ channels type is wrong]");
                 }
 
-                int rows = PyArray_DIM(arr, 0);
+                int rows = arr.shape(0);
 
-                double* first = (double*)(PyArray_DATA(arr));
-                double* last = first + PyArray_SIZE(arr);
+                double* first = reinterpret_cast<double*>(arr.get_data());
+                double* last = first + arr.shape(0)*arr.shape(1);
 
-                SD block
+                auto block
                     = Float64::create()
                           .set(RTC::now())
                           .set(0)
@@ -500,65 +423,44 @@ bool pythonParceQueue()
             }
         } break;
         case QueueMember::createOutputStream: {
+            int id = py::extract<int>(event.args.attr("id"));
+            std::string name = py::extract<const std::string>(event.args.attr("name"));
+            py::object type = event.args.attr("_source");
 
-            PyObject* streamObj = const_cast<PyObject*>(event.args.get());
-
-            PyObject* id = PyObject_GetAttrString(streamObj, "id");
-            PyObject* name = PyObject_GetAttrString(streamObj, "name");
-            PyObject* type = PyObject_GetAttrString(streamObj, "_source");
-
-            if (!PyLong_Check(id) ) { // @todo: check all args
-                throw std::runtime_error("Failed check arguments for createOutputStream");
-            }
-            
-            const char* nameStr = PyUnicode_AsUTF8(name);
-            
-
-            if ((PyObject*)type->ob_type == callback_si_event.get()) {
-                SD type = ConnectionHeader_Message::create().next().finish();
-                int sendId = ip.declareStream(nameStr, SerializedDataContainer({ type->data(), (uint32_t)type->size() }));
+            if (reinterpret_cast<PyObject*>(type.ptr()->ob_type) == callback_si_event.ptr()) {
+                auto type = ConnectionHeader_Message::create().next().finish();
+                int sendId = ip.declareStream(name.c_str(), SerializedDataContainer({ type->data(), (uint32_t)type->size() }));
                 if (sendId != -1) {
-                    outputs[PyLong_AsLong(id)] = { sendId, Message::ID };
+                    outputs[id] = { sendId, Message::ID };
                 }
-            } else if ((PyObject*)type->ob_type == callback_si_channels.get()) {
-                PyObject* samplingRate = PyObject_GetAttrString(type, "samplingRate");
-                PyObject* channels = PyObject_GetAttrString(type, "channels");
-
-                if (!PyLong_Check(channels) || !PyFloat_Check(samplingRate)) {
-                    throw std::runtime_error("Failed check arguments for createOutputStream [channels]");
-                }
+            } else if (reinterpret_cast<PyObject*>(type.ptr()->ob_type) == callback_si_channels.ptr()) {
+                double samplingRate = py::extract<double>(type.attr("samplingRate"));
+                int channels = py::extract<int>(type.attr("channels"));
                 
 
-                SD type = ConnectionHeader_Float64::create()
-                              .set(PyLong_AsLong(channels))
-                              .set(PyFloat_AsDouble(samplingRate))
+                auto type = ConnectionHeader_Float64::create()
+                              .set(channels)
+                              .set(samplingRate)
                               .finish();
-                int sendId = ip.declareStream(nameStr, SerializedDataContainer({ type->data(), (uint32_t)type->size() }));
+                int sendId = ip.declareStream(name.c_str(), SerializedDataContainer({ type->data(), (uint32_t)type->size() }));
 
                 if (sendId != -1) {
-                    outputs[PyLong_AsLong(id)] = { sendId, Float64::ID };
+                    outputs[id] = { sendId, Float64::ID };
                 }
             }
         } break;
         case QueueMember::startTimer: {
-            /*long int id;
-            long int timeout;
-            PyObject* singleShot;
-            if (!PyArg_ParseTuple(const_cast<PyObject*>(event.args), "llO", &id, &timeout, &singleShot)) {
-                throw std::runtime_error("Can't unpack arguments for startTimer");
-            }
+            long int id = py::extract<long int>(event.args[0]);
+            long int timeout = py::extract<long int>(event.args[1]);
+            bool singleShot = py::extract<bool>(event.args[2]);
 
-            ip.startTimer(id, timeout, singleShot == Py_True);
-*/
+            ip.startTimer(id, timeout, singleShot);
+
         } break;
         case QueueMember::stopTimer: {
-            /*long int id;
-            if (!PyArg_ParseTuple(const_cast<PyObject*>(event.args), "l", &id)) {
-                throw std::runtime_error("Can't unpack arguments for stopTimer");
-            }
-
+            long int id = py::extract<long int>(event.args[0]);
             ip.stopTimer(id);
-*/
+
         } break;
         }
     }
