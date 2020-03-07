@@ -4,15 +4,17 @@
 
 
 #include <Resonance/scriptengineinterface.h>
-
 #include <boost/python.hpp>
 #include <boost/python/numpy.hpp>
-
 #include <Resonance/protocol.cpp>
 #include <Resonance/rtc.cpp>
 #include <iostream>
 #include <map>
 #include <vector>
+
+#ifdef LIBRARY_HACK
+#include <dlfcn.h> 
+#endif
 
 namespace py = boost::python;
 namespace np = boost::python::numpy;
@@ -27,64 +29,7 @@ static const char* engineInitString = "import resonance\n";
 static const char* engineCodeString = R"(from resonance import *
 createOutput(input(0), 'out')
 )";
-/*
-class SmartPyObject
-{
-public:
-    enum CaptureMode {
-        Move,
-        Copy
-    };
 
-    SmartPyObject(PyObject* ptr, CaptureMode mode=Move)
-    {
-        if(mode == Copy)
-        {
-            Py_XINCREF(ptr);
-        }
-        obj = ptr;
-    }
-
-    ~SmartPyObject()
-    {
-        Py_XDECREF(obj);
-    }
-
-    SmartPyObject(const SmartPyObject &right)
-    {
-        Py_XINCREF(right.obj);
-        obj = right.obj;
-    }
-
-    SmartPyObject& operator=(const SmartPyObject &right)
-    {
-        Py_XINCREF(right.obj);
-        obj = right.obj;
-        return *this;
-    }
-
-    SmartPyObject(SmartPyObject &&right) = default;
-
-    PyObject* get() const
-    {
-        return obj;
-    }
-
-    void reset(PyObject* ptr)
-    {
-        Py_XDECREF(obj);
-        obj = ptr;
-    }
-
-    operator bool()
-    {
-        return obj != nullptr;
-    }
-
-private:
-    PyObject *obj;
-};
-*/
 struct QueueMember {
     enum Type {
         sendBlockToStream,
@@ -180,8 +125,7 @@ void mod_register_callbacks(py::object new_callback_on_prepare,
                             py::object new_callback_si_channels,
                             py::object new_callback_si_event,
                             py::object new_callback_db_event,
-                            py::object new_callback_db_channels,
-                            py::object new_callback_trace)
+                            py::object new_callback_db_channels)
 {
     callback_on_prepare    = new_callback_on_prepare   ;
     callback_on_data_block = new_callback_on_data_block;
@@ -191,17 +135,45 @@ void mod_register_callbacks(py::object new_callback_on_prepare,
     callback_si_event      = new_callback_si_event     ;
     callback_db_event      = new_callback_db_event     ;
     callback_db_channels   = new_callback_db_channels  ;
-    callback_trace         = new_callback_trace        ;
+}
+
+void mod_register_callbacks(py::object new_callback_on_prepare,
+                            py::object new_callback_on_data_block,
+                            py::object new_callback_on_start,
+                            py::object new_callback_on_stop,
+                            py::object new_callback_si_channels,
+                            py::object new_callback_si_event,
+                            py::object new_callback_db_event,
+                            py::object new_callback_db_channels,
+                            py::object new_callback_trace)
+{
+    mod_register_callbacks(
+        new_callback_on_prepare   ,
+        new_callback_on_data_block,
+        new_callback_on_start     ,
+        new_callback_on_stop      ,
+        new_callback_si_channels  ,
+        new_callback_si_event     ,
+        new_callback_db_event     ,
+        new_callback_db_channels
+    );
+    callback_trace = new_callback_trace;
 }
 
 
 #define RESONANCE_PACKAGE_RUNTIME_NAME resonate
 constexpr auto do_nothing = "do_nothing";
 
+
+void (*register_callbacks_9)(py::object,py::object,py::object,py::object,py::object,py::object,py::object,py::object,py::object) = &mod_register_callbacks;
+void (*register_callbacks_8)(py::object,py::object,py::object,py::object,py::object,py::object,py::object,py::object) = &mod_register_callbacks;
+
+
 BOOST_PYTHON_MODULE(RESONANCE_PACKAGE_RUNTIME_NAME)
 {
     def("add_to_queue", &mod_addToQueue);
-    def("register_callbacks", &mod_register_callbacks);
+    def("register_callbacks", register_callbacks_8);
+    def("register_callbacks", register_callbacks_9);
     def(do_nothing, &mod_do_nothing);
 }
 
@@ -232,8 +204,6 @@ bool initializeEngine(InterfacePointers _ip, const char* code, size_t code_lengt
     try{
         py::object main_module = py::import("__main__");
         py::object main_namespace = main_module.attr("__dict__");
-
-
         py::exec(py::str(code, code_length), main_namespace, main_namespace);
     }
     catch(py::error_already_set &e)

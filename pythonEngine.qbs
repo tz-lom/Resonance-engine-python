@@ -17,7 +17,7 @@ Product {
     files: [ "pythonengine.cpp" ]
 
     cpp.cxxLanguageVersion: "c++11"
-    cpp.defines: "RESONANCE_EXPOSE_PROTOCOL"
+    cpp.defines: ['RESONANCE_EXPOSE_PROTOCOL']
 
     Probe {
         id: pythonAndNumpyRecognizer
@@ -101,7 +101,7 @@ Product {
     Properties {
         condition: qbs.targetOS.contains("linux")
         
-        cpp.defines: outer.concat(python.defines) //.concat(['LIBRARY_HACK='+python.libraries])
+        cpp.defines: outer.concat(python.defines).concat(['LIBRARY_HACK='+python.libraries])
         cpp.dynamicLibraries: outer.concat(python.libraries)
         cpp.libraryPaths: outer.concat(python.libraryPaths)
         cpp.includePaths: outer.concat(python.includePaths)
