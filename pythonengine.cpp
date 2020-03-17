@@ -2,7 +2,6 @@
 
 // PVS-Studio Static Code Analyzer for C, C++ and C#: http://www.viva64.com
 
-
 #include <Resonance/scriptengineinterface.h>
 #include <boost/python.hpp>
 #include <boost/python/numpy.hpp>
@@ -356,7 +355,7 @@ bool pythonParceQueue()
 
             switch (os.type) {
             case Message::ID: {
-                SerializedData block = Message::create()
+                auto block = Message::create()
                                .set(RTC::now())
                                .set(0)
                                .set(py::extract<std::string>(data))

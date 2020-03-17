@@ -2,7 +2,8 @@ import qbs 1.0
 import qbs.Process
 import qbs.Probes as Probes
 
-Product {
+ Product {
+    condition: pythonAndNumpyRecognizer.found || pythonPkgConfig.found
     Depends { name: "Resonance" }
     Depends { name: "cpp" }
     Depends { name: "boost" }
@@ -19,18 +20,27 @@ Product {
     cpp.cxxLanguageVersion: "c++11"
     cpp.defines: ['RESONANCE_EXPOSE_PROTOCOL']
 
+    Probes.PkgConfigProbe {
+        id: pythonPkgConfig
+        name: "python-3.8"
+    }
+
     Probe {
         id: pythonAndNumpyRecognizer
 
         property string pythonRoot: ''
         property string pythonArch: ''
         property string numpyIncludeDir: ''
+        property var includePaths: []
+        property var libraries: []
 
         configure: {
-            var app = ["python3.7"];
+            var app = ["python"];
             var getPythonRoot = ["-c", "import sys; print(sys.exec_prefix)"];
             var getPythonArch = ["-c", "import platform; print(platform.architecture()[0])"];
-            var getNumpyIncludeDir = ["-c", "import numpy.distutils; print(numpy.distutils.misc_util.get_numpy_include_dirs()[0])"];
+            const getNumpyIncludeDir = ["-c", "import numpy.distutils; print(numpy.distutils.misc_util.get_numpy_include_dirs()[0])"];
+            const getPythonIncludeDir = ['-c', "from sysconfig import get_paths as gp; print(gp()['include'])"]
+            const getPythonLibrariesDir = ['-c', "from sysconfig import get_paths as gp; print(gp()['data'])"]
 
             var pythonArchBuffer;
 
@@ -42,32 +52,40 @@ Product {
                 found = true;
             }else{
                 found = false;
+                return;
             }
 
-            if(found){
-                if(proc.exec(app, getPythonArch) === 0){
-                    pythonArchBuffer = proc.readStdOut().trim();
-                    found = true;
-                    if(pythonArchBuffer === "64bit"){
-                        pythonArch = "x86_64"
-                    }else if(pythonArchBuffer === "32bit"){
-                        pythonArch = "x86"
-                    }else{
-                        found = false;
-                    }
+
+            if(proc.exec(app, getPythonArch) === 0){
+                pythonArchBuffer = proc.readStdOut().trim();
+                found = true;
+                if(pythonArchBuffer === "64bit"){
+                    pythonArch = "x86_64"
+                }else if(pythonArchBuffer === "32bit"){
+                    pythonArch = "x86"
                 }else{
                     found = false;
                 }
             }
 
-            if(found){
-                if(proc.exec(app, getNumpyIncludeDir) === 0){
-                    numpyIncludeDir = proc.readStdOut().trim();
-                }else{
-                    found = false;
-                }
+            if(proc.exec(app, getNumpyIncludeDir) === 0){
+                numpyIncludeDir = proc.readStdOut().trim();
             }
-            proc.close();
+            if(proc.exec(app, getPythonIncludeDir) === 0)
+            {
+                includePaths = [
+                    proc.readStdOut().trim()
+                ];
+                if(numpyIncludeDir) includePaths.push(numpyIncludeDir);
+            }
+            if(proc.exec(app, getPythonLibrariesDir) === 0)
+            {
+                const basePath = proc.readStdOut().trim();
+                libraries = [
+                    basePath + '\\libs\\libpython38.dll.a',
+                    basePath + '\\python38.dll'
+                ];
+            }
         }
     }
 
@@ -77,34 +95,25 @@ Product {
         "thir"
     ]
 
-    Properties {
-        condition: qbs.targetOS.contains('windows')
-        
-        cpp.dynamicLibraries: 'python37'
-    }
-/*
-    Properties {
-        condition: qbs.targetOS.contains("windows") && qbs.architecture === "x86"
-        cpp.defines: outer.concat(['WIN32', '_hypot=hypot'])
+
+    Group {
+        name: '!'+pythonAndNumpyRecognizer.includePaths
     }
 
     Properties {
-        condition: qbs.targetOS.contains("windows") && qbs.architecture === "x86_64"
-        cpp.defines: outer.concat(['MS_WIN64', '_hypot=hypot'])
-    }
-*/
-    Probes.PkgConfigProbe {
-        id: python
-        name: "python-3.7"
+        condition: qbs.targetOS.contains("windows")
+
+        cpp.dynamicLibraries: outer.concat(pythonAndNumpyRecognizer.libraries)
+        cpp.includePaths: outer.concat(pythonAndNumpyRecognizer.includePaths)
     }
 
     Properties {
         condition: qbs.targetOS.contains("linux")
-        
-        cpp.defines: outer.concat(python.defines).concat(['LIBRARY_HACK='+python.libraries])
-        cpp.dynamicLibraries: outer.concat(python.libraries)
-        cpp.libraryPaths: outer.concat(python.libraryPaths)
-        cpp.includePaths: outer.concat(python.includePaths)
+
+        cpp.defines: outer.concat(pythonPkgConfig.defines).concat(['LIBRARY_HACK='+pythonPkgConfig.libraries])
+        cpp.dynamicLibraries: outer.concat(pythonPkgConfig.libraries)
+        cpp.libraryPaths: outer.concat(pythonPkgConfig.libraryPaths)
+        cpp.includePaths: outer.concat(pythonPkgConfig.includePaths)
         cpp.linkerFlags: ['-export-dynamic']
     }
 
