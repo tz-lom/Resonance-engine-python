@@ -2,7 +2,7 @@
 
 // PVS-Studio Static Code Analyzer for C, C++ and C#: http://www.viva64.com
 
-#include <Resonance/scriptengineinterface.h>
+#include <Resonance/scriptengineinterface.hpp>
 #include <boost/python.hpp>
 #include <boost/python/numpy.hpp>
 #include <Resonance/protocol.cpp>
