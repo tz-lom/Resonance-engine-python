@@ -5,6 +5,7 @@
 #include <Resonance/scriptengineinterface.h>
 #include <boost/python.hpp>
 #include <boost/python/numpy.hpp>
+#include <boost/python/call_method.hpp>
 #include <Resonance/protocol.cpp>
 #include <Resonance/rtc.cpp>
 #include <iostream>
@@ -28,6 +29,11 @@ static const char* engineInitString = "import resonance\n";
 static const char* engineCodeString = R"(from resonance import *
 createOutput(input(0), 'out')
 )";
+
+void logError(const std::string &msg)
+{
+    ip.logError(msg.data(), msg.size());
+}
 
 struct QueueMember {
     enum Type {
@@ -176,169 +182,222 @@ BOOST_PYTHON_MODULE(RESONANCE_PACKAGE_RUNTIME_NAME)
     def(do_nothing, &mod_do_nothing);
 }
 
+void handle(const std::string &context) try 
+{ 
+  throw;
+}
+catch(const py::error_already_set &)
+{
+    PyObject *ptype, *pvalue, *ptraceback;
+    PyErr_Fetch(&ptype, &pvalue, &ptraceback);
+
+    //Extract error message
+    const std::string strErrorMessage = py::call_method<std::string>(pvalue, "__str__");
+    logError(strErrorMessage + " during "+context);
+}
+catch (...)
+{
+   logError("Unknown failure during "+context);
+}
+
+
 bool initializeEngine(InterfacePointers _ip, const char* code, size_t code_length)
 {
-    ip = _ip;
-    
+    try
+    {
+        ip = _ip;
+        
 #ifdef LIBRARY_HACK
-    dlopen("lib" BOOST_PP_STRINGIZE(LIBRARY_HACK) ".so", RTLD_LAZY | RTLD_GLOBAL);
+        dlopen("lib" BOOST_PP_STRINGIZE(LIBRARY_HACK) ".so", RTLD_LAZY | RTLD_GLOBAL);
 #endif
+        
+        Py_SetProgramName(L"pythonEngine");
+        PyImport_AppendInittab("resonate", &PyInit_resonate);
+        Py_Initialize();
+        np::initialize();
+        
+        //callback_on_prepare = py::import(BOOST_PP_STRINGIZE(RESONANCE_PACKAGE_RUNTIME_NAME)).attr(do_nothing);
     
-    Py_SetProgramName(L"pythonEngine");
-    PyImport_AppendInittab("resonate", &PyInit_resonate);
-    Py_Initialize();
-    np::initialize();
+        callback_on_data_block = callback_on_prepare;
+        callback_on_start = callback_on_prepare;
+        callback_on_stop = callback_on_prepare;
+        callback_si_channels = callback_on_prepare;
+        callback_si_event = callback_on_prepare;
+        callback_db_event = callback_on_prepare;
+        callback_db_channels = callback_on_prepare;
+        callback_trace = callback_on_prepare;
     
-    //callback_on_prepare = py::import(BOOST_PP_STRINGIZE(RESONANCE_PACKAGE_RUNTIME_NAME)).attr(do_nothing);
 
-    callback_on_data_block = callback_on_prepare;
-    callback_on_start = callback_on_prepare;
-    callback_on_stop = callback_on_prepare;
-    callback_si_channels = callback_on_prepare;
-    callback_si_event = callback_on_prepare;
-    callback_db_event = callback_on_prepare;
-    callback_db_channels = callback_on_prepare;
-    callback_trace = callback_on_prepare;
-
-    try{
         py::object main_module = py::import("__main__");
         py::object main_namespace = main_module.attr("__dict__");
         py::exec(py::str(code, code_length), main_namespace, main_namespace);
+
+        return true;
     }
-    catch(py::error_already_set &e)
+    catch(...)
     {
-        PyObject *ptype, *pvalue, *ptraceback;
-        PyErr_Fetch(&ptype, &pvalue, &ptraceback);
-    
-        py::handle<> hType(ptype);
-        py::object extype(hType);
-        py::handle<> hTraceback(ptraceback);
-        py::object traceback(hTraceback);
-    
-        //Extract error message
-        std::string strErrorMessage = py::extract<std::string>(pvalue);
-        std::cout << "Error:" << strErrorMessage;
-        
+        handle("initialize");
         return false;
     }
-    
-    return true;
 }
 
 void freeEngine()
 {
+    try
+    {
     //Py_Finalize(); disabled because of bug in boost
+    }
+    catch(...)
+    {
+        handle("free");
+    }
 }
 
 bool prepareEngine(const char* code, size_t codeLength, const SerializedDataContainer* const streams, size_t streamCount)
 {
-    outputs.clear();
-    inputs.clear();
-    queue.clear();
-
-    py::list inputList;
-    for (uint32_t i = 0; i < streamCount; ++i) {
-        Thir::SerializedData data(static_cast<const char*>(streams[i].data), streams[i].size);
-        //data.extractString<ConnectionHeaderContainer::name>()
-        Thir::SerializedData type = data.field<ConnectionHeaderContainer::type>();
-
-        switch (type.id()) {
-        //case ConnectionHeader_Int32::ID:
-        //case ConnectionHeader_Int64::ID:
-        case ConnectionHeader_Float64::ID: {
-            
-            const auto name = data.field<ConnectionHeaderContainer::name>().value();
-            
-            py::object si = callback_si_channels(
-                        type.field<ConnectionHeader_Float64::channels>().value(),
-                        type.field<ConnectionHeader_Float64::samplingRate>().value(),
-                        i + 1,
-                        py::str(name.c_str(), name.size())
-                    );
-            
-            if (si.is_none())
-                throw std::runtime_error("Failed to construct Float64 stream definition");
-            
-            si.attr("online")=true;
-            
-            inputList.append(si);
-
-            inputs.emplace(i, InputStreamDescription{static_cast<int>(i + 1), Float64::ID, si});
-        } break;
-
-        case ConnectionHeader_Message::ID: {
-            const auto name = data.field<ConnectionHeaderContainer::name>().value();
-            py::object si = callback_si_event(i + 1, py::str(name.c_str(), name.size()));
-            if (si.is_none())
-                throw std::runtime_error("Failed to construct Message stream definition");
-            
-            si.attr("online") = true;
-            inputList.append(si);
-
-            inputs.emplace(i, InputStreamDescription{static_cast<int>(i + 1), Message::ID, si});
-        } break;
+    try
+    {
+        outputs.clear();
+        inputs.clear();
+        queue.clear();
+    
+        py::list inputList;
+        for (uint32_t i = 0; i < streamCount; ++i) {
+            Thir::SerializedData data(static_cast<const char*>(streams[i].data), streams[i].size);
+            //data.extractString<ConnectionHeaderContainer::name>()
+            Thir::SerializedData type = data.field<ConnectionHeaderContainer::type>();
+    
+            switch (type.id()) {
+            //case ConnectionHeader_Int32::ID:
+            //case ConnectionHeader_Int64::ID:
+            case ConnectionHeader_Float64::ID: {
+                
+                const auto name = data.field<ConnectionHeaderContainer::name>().value();
+                
+                py::object si = callback_si_channels(
+                            type.field<ConnectionHeader_Float64::channels>().value(),
+                            type.field<ConnectionHeader_Float64::samplingRate>().value(),
+                            i + 1,
+                            py::str(name.c_str(), name.size())
+                        );
+                
+                if (si.is_none())
+                    throw std::runtime_error("Failed to construct Float64 stream definition");
+                
+                si.attr("online")=true;
+                
+                inputList.append(si);
+    
+                inputs.emplace(i, InputStreamDescription{static_cast<int>(i + 1), Float64::ID, si});
+            } break;
+    
+            case ConnectionHeader_Message::ID: {
+                const auto name = data.field<ConnectionHeaderContainer::name>().value();
+                py::object si = callback_si_event(i + 1, py::str(name.c_str(), name.size()));
+                if (si.is_none())
+                    throw std::runtime_error("Failed to construct Message stream definition");
+                
+                si.attr("online") = true;
+                inputList.append(si);
+    
+                inputs.emplace(i, InputStreamDescription{static_cast<int>(i + 1), Message::ID, si});
+            } break;
+            }
         }
+    
+        callback_on_prepare(py::str(code, codeLength), inputList);
+    
+        return pythonParceQueue();
     }
-
-    callback_on_prepare(py::str(code, codeLength), inputList);
-
-    return pythonParceQueue();
+    catch(...)
+    {
+        handle("prepare");
+        return false;
+    }
 }
 
 void blockReceived(const int id, const SerializedDataContainer block)
 {
-
-    auto iterator = inputs.find(id);
-    if(iterator == inputs.end())
+    try
     {
-        throw std::runtime_error("Failed to retrieve stream information for block");
+        auto iterator = inputs.find(id);
+        if(iterator == inputs.end())
+        {
+            throw std::runtime_error("Failed to retrieve stream information for block");
+        }
+        auto is = iterator->second;
+    
+        switch (is.type) {
+        case Message::ID: {
+            Thir::SerializedData data(block.data, block.size);
+    
+            auto block = callback_db_event(is.si,
+                                     data.field<Message::created>().value(),
+                                     data.field<Message::message>().value());
+    
+            callback_on_data_block(block);
+        } break;
+        case Float64::ID: {
+            Thir::SerializedData data(block.data, block.size);
+    
+            auto vec = data.field<Float64::data>().toVector();
+    
+            int samples = data.field<Float64::samples>().value();
+            const auto channels =  static_cast<Py_intptr_t>(vec.size() / samples);
+            
+            auto pyData = np::from_data(
+                        reinterpret_cast<void*>(vec.data()), np::dtype::get_builtin<double>(), 
+                        py::make_tuple(samples, channels),
+                        py::make_tuple(sizeof(double)*channels, sizeof(double)),
+                        py::object()).copy();
+    
+            auto block = callback_db_channels(is.si, data.field<Float64::created>().value(), pyData);
+            callback_on_data_block(block);
+        } break;
+        }
+    
+        pythonParceQueue();
     }
-    auto is = iterator->second;
-
-    switch (is.type) {
-    case Message::ID: {
-        Thir::SerializedData data(block.data, block.size);
-
-        auto block = callback_db_event(is.si,
-                                 data.field<Message::created>().value(),
-                                 data.field<Message::message>().value());
-
-        callback_on_data_block(block);
-    } break;
-    case Float64::ID: {
-        Thir::SerializedData data(block.data, block.size);
-
-        auto vec = data.field<Float64::data>().toVector();
-
-        int samples = data.field<Float64::samples>().value();
-        const auto channels =  static_cast<Py_intptr_t>(vec.size() / samples);
-        
-        auto pyData = np::from_data(
-                    reinterpret_cast<void*>(vec.data()), np::dtype::get_builtin<double>(), 
-                    py::make_tuple(samples, channels),
-                    py::make_tuple(sizeof(double)*channels, sizeof(double)),
-                    py::object()).copy();
-
-        auto block = callback_db_channels(is.si, data.field<Float64::created>().value(), pyData);
-        callback_on_data_block(block);
-    } break;
+    catch(...)
+    {
+        handle("blockReceived");
     }
-
-    pythonParceQueue();
 }
 
 void startEngine()
 {
-    callback_on_start();
+    try
+    {
+        callback_on_start();
+    }
+    catch(...)
+    {
+        handle("startEngine");
+    }
 }
 
 void stopEngine()
 {
-    callback_on_stop();
+    try
+    {
+        callback_on_stop();
+    }
+    catch(...)
+    {
+        handle("stopEngine");
+    }
 }
 
 void onTimer(const int /*id*/, const uint64_t /*time*/)
 {
+    try
+    {
+        
+    }
+    catch(...)
+    {
+        handle("onTimer");
+    }
 }
 
 bool pythonParceQueue()

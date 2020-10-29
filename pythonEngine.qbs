@@ -22,7 +22,7 @@ import qbs.Probes as Probes
 
     Probes.PkgConfigProbe {
         id: pythonPkgConfig
-        name: "python-3.8"
+        name: "python-3.8-embed"
     }
 
     Probe {
@@ -97,7 +97,7 @@ import qbs.Probes as Probes
 
 
     Group {
-        name: '!'+pythonAndNumpyRecognizer.includePaths
+        name: '!'+pythonPkgConfig.libraries//+pythonAndNumpyRecognizer.includePaths
     }
 
     Properties {
