@@ -18,7 +18,7 @@ import qbs.Probes as Probes
     files: [ "pythonengine.cpp" ]
 
     cpp.cxxLanguageVersion: "c++11"
-    cpp.defines: ['RESONANCE_EXPOSE_PROTOCOL']
+    cpp.defines: ['RESONANCE_EXPOSE_PROTOCOL', 'RESONANCE_STANDALONE']
 
     Probes.PkgConfigProbe {
         id: pythonPkgConfig
