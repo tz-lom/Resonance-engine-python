@@ -108,7 +108,7 @@ import qbs.Probes as Probes
     }
 
     Properties {
-        condition: qbs.targetOS.contains("linux")
+        condition: !qbs.targetOS.contains("windows")
 
         cpp.defines: outer.concat(pythonPkgConfig.defines).concat(['LIBRARY_HACK='+pythonPkgConfig.libraries])
         cpp.dynamicLibraries: outer.concat(pythonPkgConfig.libraries)
