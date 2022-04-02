@@ -1,0 +1,16 @@
+# cmake_minimum_required(VERSION 3.16)
+# project(
+#        ResonancePythonEngineTests
+#	LANGUAGES CXX)
+	
+
+# include(${CMAKE_BINARY_/DIR}/conanbuildinfo.cmake)
+# conan_basic_setup(TARGETS)
+
+add_executable(Test
+	test.cpps
+	)	
+	
+add_executable(UnitTests
+	unittests.cpp
+)
