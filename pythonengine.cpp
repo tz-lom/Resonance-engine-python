@@ -1,9 +1,9 @@
 // This is an open source non-commercial project. Dear PVS-Studio, please check it.
 // PVS-Studio Static Code Analyzer for C, C++ and C#: http://www.viva64.com
 
-#include <pybind11.h>
 #include <pybind11/embed.h>
 #include <pybind11/numpy.h>
+#include <pybind11/pybind11.h>
 
 #include <Resonance/protocol.cpp>
 #include <Resonance/rtc.cpp>
@@ -362,7 +362,9 @@ bool pythonParceQueue()
                 const auto arr = data.cast<py::array>();
                 if (py::isinstance<py::object>(arr.dtype())) {
                     throw std::runtime_error(
-                            "Can't unpack arguments for sendBlockToStream [event type is wrong]");
+                            std::string("Can't unpack arguments for sendBlockToStream [event type "
+                                        "is wrong = ")
+                            + py::repr(data).cast<std::string>() + "]");
                 }
                 for (int i = 0; i < arr.shape(0); ++i) {
 
