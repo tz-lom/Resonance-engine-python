@@ -194,11 +194,11 @@ PYBIND11_EMBEDDED_MODULE(RESONANCE_PACKAGE_RUNTIME_NAME, m)
     struct StdIOHook
     {};
 
-    py::class_<StdIOHook> stdout(m, "stdout");
-    stdout.def_static("write", [](const py::object& buffer) {
-        qCDebug(pythonLogs) << buffer.cast<std::string>().c_str();
-    });
-    stdout.def_static("flush", []() {});
+    py::class_<StdIOHook>(m, "stdout")
+        .def_static("write", [](const py::object& buffer) {
+            qCDebug(pythonLogs) << buffer.cast<std::string>().c_str();
+        })
+        .def_static("flush", []() {});
 
     // py::class_<StdIOHook> stderr(m, "stderr");
     // stderr.def_static("write", [](const py::object& buffer) {
@@ -411,20 +411,30 @@ bool pythonParceQueue()
             switch (os.type) {
             case Message::ID: {
                 const auto arr = data.cast<py::array>();
-                if (py::isinstance<py::object>(arr.dtype())) {
-                    throw std::runtime_error(
-                        std::string("Can't unpack arguments for sendBlockToStream [event type "
-                                    "is wrong = ")
-                        + py::repr(data).cast<std::string>() + "]");
-                }
-                for (int i = 0; i < arr.shape(0); ++i) {
-                    auto block = Message::create()
-                                     .set(RTC::now())
-                                     .set(0)
-                                     .set(arr(i).cast<std::string>())
-                                     .finish();
+                // if (py::isinstance<py::object>(arr.dtype())) {
+                //     throw std::runtime_error(
+                //         std::string("Can't unpack arguments for sendBlockToStream [event type "
+                //                     "is wrong = ")
+                //         + py::repr(data).cast<std::string>() + "]");
+                // }
+                if(py::isinstance<py::object>(arr.dtype()))
+                {
+                    const auto view = arr.unchecked<py::object>();
+                    for (int i = 0; i < arr.shape(0); ++i) {
+                        const auto elem = view(i);
+                        auto block = Message::create()
+                                         .set(RTC::now())
+                                         .set(0)
+                                         .set(std::string(py::str(elem)))
+                                         .finish();
 
-                    ip.sendBlock(os.id, SerializedDataContainer({block->data(), block->size()}));
+                        ip.sendBlock(os.id, SerializedDataContainer({block->data(), block->size()}));
+                    }
+                }
+                else
+                {
+                    throw std::runtime_error( std::string("Unsupported data type in sendBlockToStream [event = ")+
+                                     py::repr(data).cast<std::string>() + "]");
                 }
             } break;
             case Float64::ID: {
